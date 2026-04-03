@@ -1,0 +1,30 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Cho phép chạy thủ công từ GitHub
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build EXE
+        run: pyinstaller build.spec --clean --noconfirm
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: TongHopKhaoSat-Windows
+          path: dist/TongHopKhaoSat.exe
+          retention-days: 90

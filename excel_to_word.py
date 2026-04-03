@@ -1,0 +1,1103 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Script tổng hợp kết quả khảo sát từ file Excel (.xls) sang báo cáo Word (.docx)
+Dùng cho: Báo cáo tổng hợp kết quả khảo sát sinh viên sau khi kết thúc học phần
+
+Cách sử dụng:
+  python3 excel_to_word.py                          # Xử lý tất cả file .xls trong thư mục hiện tại
+  python3 excel_to_word.py "file1.xls"              # Xử lý 1 file cụ thể
+  python3 excel_to_word.py "file1.xls" "file2.xls"  # Xử lý nhiều file
+  python3 excel_to_word.py --input-dir ./data        # Xử lý tất cả .xls trong thư mục chỉ định
+  python3 excel_to_word.py --output-dir ./output     # Lưu kết quả vào thư mục chỉ định
+"""
+
+import sys
+import os
+import glob
+import argparse
+import re
+import xlrd
+from docx import Document
+from docx.shared import Pt, Cm, Inches, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml.ns import qn, nsdecls
+from docx.oxml import parse_xml
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CẤU HÌNH - Điều chỉnh theo nhu cầu
+# ═══════════════════════════════════════════════════════════════════
+
+CONFIG = {
+    "university_name": "ĐẠI HỌC Y DƯỢC\nTHÀNH PHỐ HỒ CHÍ MINH",
+    "faculty_name": "KHOA KHCB",                # Tên khoa/đơn vị
+    "country_header": "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
+    "country_slogan": "Độc lập – Tự do – Hạnh phúc",
+    "report_title_lines": [
+        "BÁO CÁO TỔNG HỢP KẾT QUẢ",
+        "KHẢO SÁT SINH VIÊN SAU KHI KẾT THÚC HỌC PHẦN CƠ SỞ",
+        "& ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN",
+    ],
+    "font_name": "Times New Roman",
+    "font_size": 12,                             # pt
+    "scale_labels": [                            # Nhãn thang đo Likert 5 mức
+        "1. Hoàn toàn không đồng ý",
+        "2. Không đồng ý",
+        "3. Đồng ý một phần",
+        "4. Đồng ý",
+        "5. Hoàn toàn đồng ý",
+    ],
+    # Các nhóm tiêu chí (section) - được tự động phát hiện từ Excel
+    # Nếu không tự động phát hiện được, sẽ dùng mapping mặc định bên dưới
+    "section_mapping": {
+        # Câu C1-C10 trong Excel khảo sát -> section name
+        # Điều chỉnh nếu file Excel có cấu trúc khác
+    },
+    "default_sections": [
+        {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "questions": range(1, 11)},
+        {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "questions": range(11, 15)},
+        {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "questions": range(15, 19)},
+        {"name": "IV. CẢM NHẬN CHUNG", "questions": range(19, 23)},
+    ],
+}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TRÍCH XUẤT DỮ LIỆU TỪ EXCEL
+# ═══════════════════════════════════════════════════════════════════
+
+def extract_data_from_excel(filepath, sheet_index=0):
+    """Đọc và trích xuất toàn bộ dữ liệu từ file Excel khảo sát."""
+    wb = xlrd.open_workbook(filepath)
+    sheet = wb.sheet_by_index(sheet_index)
+    
+    data = {
+        "meta": {},
+        "background_info": [],    # Thông tin nền (giới tính, hình thức đào tạo...)
+        "survey_questions": [],   # Các câu hỏi khảo sát với dữ liệu
+        "open_responses": "",     # Câu hỏi mở
+        "signer_name": "",        # Người lập
+        "signer_date": "",        # Ngày lập
+    }
+    
+    # --- Trích xuất metadata từ header ---
+    for r in range(min(10, sheet.nrows)):
+        row_text = " ".join(str(sheet.cell(r, c).value).strip() for c in range(sheet.ncols))
+        
+        # Đợt khảo sát
+        if "Đợt khảo sát" in row_text or "đợt khảo sát" in row_text.lower():
+            data["meta"]["dot_khao_sat"] = str(sheet.cell(r, 0).value).replace("Đợt khảo sát:", "").strip().rstrip(" ")
+        
+        # Phiếu khảo sát
+        for c in range(sheet.ncols):
+            val = str(sheet.cell(r, c).value).strip()
+            if "Phiếu khảo sát" in val:
+                # Phiếu khảo sát name thường ở ô kế tiếp
+                for cc in range(c + 1, sheet.ncols):
+                    pval = str(sheet.cell(r, cc).value).strip().rstrip(" ")
+                    if pval:
+                        data["meta"]["phieu_khao_sat"] = pval
+                        break
+        
+        # Thời gian khảo sát
+        if "Thời gian KS" in row_text or "Thời gian" in row_text:
+            val = str(sheet.cell(r, 0).value).strip()
+            match = re.search(r'Từ\s+(.+)', val)
+            if match:
+                data["meta"]["thoi_gian_ks"] = match.group(1).strip().rstrip(" ")
+            else:
+                time_part = val.replace("Thời gian KS:", "").replace("Thời gian:", "").strip()
+                data["meta"]["thoi_gian_ks"] = time_part.rstrip(" ")
+        
+        # Lớp học
+        if "Lớp học" in row_text:
+            for c in range(sheet.ncols):
+                if "Lớp học" in str(sheet.cell(r, c).value):
+                    for cc in range(c + 1, sheet.ncols):
+                        lop = str(sheet.cell(r, cc).value).strip().rstrip(" ")
+                        if lop:
+                            data["meta"]["lop_hoc"] = lop
+                            break
+                    break
+        
+        # Môn học
+        if "Môn học" in row_text:
+            val = str(sheet.cell(r, 0).value).strip()
+            mon = val.replace("Môn học:", "").strip().rstrip(" ")
+            if mon:
+                data["meta"]["mon_hoc"] = mon
+        
+        # Giảng viên
+        if "Giảng viên" in row_text:
+            for c in range(sheet.ncols):
+                if "Giảng viên" in str(sheet.cell(r, c).value):
+                    for cc in range(c + 1, sheet.ncols):
+                        gv = str(sheet.cell(r, cc).value).strip().rstrip(" ")
+                        if gv:
+                            data["meta"]["giang_vien"] = gv
+                            break
+                    break
+
+    # --- Parse dữ liệu chính: thông tin nền + câu hỏi khảo sát ---
+    section = None  # "thong_tin_chung" hoặc "khao_sat"
+    current_question = None
+    
+    for r in range(sheet.nrows):
+        col0 = str(sheet.cell(r, 0).value).strip()
+        col1 = str(sheet.cell(r, 1).value).strip()
+        
+        # Phát hiện section headers
+        if col0 == "Thông tin chung" and not col1:
+            section = "thong_tin_chung"
+            continue
+        elif col0 == "Thông tin khảo sát" and not col1:
+            section = "khao_sat"
+            continue
+        
+        # Skip header rows, empty rows
+        if not col0 and not col1:
+            continue
+        if col0 == "" and col1 == "" :
+            continue
+            
+        # --- THÔNG TIN NỀN ---
+        if section == "thong_tin_chung":
+            if col0.startswith("C") and ":" in col0 and col1 == "Số SV trả lời":
+                # Extract question label
+                label = col0.split(":", 1)[1].strip() if ":" in col0 else col0
+                
+                # Get values from columns 2 onwards
+                values = []
+                for c in range(2, sheet.ncols):
+                    val = sheet.cell(r, c).value
+                    try:
+                        values.append(float(val))
+                    except (ValueError, TypeError):
+                        values.append(0)
+                
+                # Get percentages from next row
+                if r + 1 < sheet.nrows and str(sheet.cell(r + 1, 1).value).strip() == "Tỷ lệ":
+                    percentages = []
+                    for c in range(2, sheet.ncols):
+                        val = sheet.cell(r + 1, c).value
+                        try:
+                            percentages.append(float(val))
+                        except (ValueError, TypeError):
+                            percentages.append(0)
+                else:
+                    percentages = []
+                
+                data["background_info"].append({
+                    "label": label,
+                    "counts": values,
+                    "percentages": percentages,
+                })
+            elif col0.startswith("Ngành học"):
+                nghanh = str(sheet.cell(r, 2).value).strip().rstrip(" ") if sheet.ncols > 2 else ""
+                data["meta"]["nganh_hoc_raw"] = nghanh
+        
+        # --- CÂU HỎI KHẢO SÁT ---
+        elif section == "khao_sat":
+            if col0.startswith("C") and ":" in col0 and col1 == "Số SV trả lời":
+                # Parse question
+                q_match = re.match(r'C\d+:\s*(\d+\.?\d*\.?\s*)(.*)', col0)
+                if q_match:
+                    q_number = q_match.group(1).strip().rstrip(".")
+                    q_text = q_match.group(2).strip()
+                else:
+                    # Fallback: just use the text after ":"
+                    parts = col0.split(":", 1)
+                    q_number = parts[0].replace("C", "").strip()
+                    q_text = parts[1].strip() if len(parts) > 1 else col0
+                
+                # Counts: cols 2-6 = mức 1-5, col 7 = tổng
+                counts = []
+                for c in range(2, min(7, sheet.ncols)):
+                    val = sheet.cell(r, c).value
+                    try:
+                        counts.append(int(float(val)))
+                    except (ValueError, TypeError):
+                        counts.append(0)
+                
+                total = 0
+                if sheet.ncols > 7:
+                    try:
+                        total = int(float(sheet.cell(r, 7).value))
+                    except (ValueError, TypeError):
+                        total = sum(counts)
+                else:
+                    total = sum(counts)
+                
+                # Percentages from next row
+                percentages = []
+                if r + 1 < sheet.nrows and str(sheet.cell(r + 1, 1).value).strip() == "Tỷ lệ":
+                    for c in range(2, min(7, sheet.ncols)):
+                        val = sheet.cell(r + 1, c).value
+                        try:
+                            percentages.append(float(val))
+                        except (ValueError, TypeError):
+                            percentages.append(0)
+                
+                # Tính điểm trung bình
+                if total > 0 and len(counts) == 5:
+                    avg = sum((i + 1) * counts[i] for i in range(5)) / total
+                else:
+                    avg = 0
+                
+                current_question = {
+                    "number": q_number,
+                    "text": q_text,
+                    "counts": counts,
+                    "total": total,
+                    "percentages": percentages,
+                    "average": round(avg, 2),
+                }
+                data["survey_questions"].append(current_question)
+            
+            # Câu hỏi mở (câu 20)
+            elif "ý kiến đóng góp" in col0.lower() or "ý kiến" in col0.lower() and "đóng góp" in col0.lower():
+                raw = str(sheet.cell(r, 2).value).strip().rstrip(" ") if sheet.ncols > 2 else ""
+                data["open_responses"] = raw
+    
+    # --- Trích xuất thông tin cuối file (ngày, người ký) ---
+    for r in range(max(0, sheet.nrows - 10), sheet.nrows):
+        for c in range(sheet.ncols):
+            val = str(sheet.cell(r, c).value).strip()
+            if "ngày" in val.lower() and "tháng" in val.lower():
+                data["signer_date"] = val.rstrip(" ")
+            if "Người lập" in val:
+                # Tên người lập thường ở vài dòng sau
+                for rr in range(r + 1, min(r + 5, sheet.nrows)):
+                    name = str(sheet.cell(rr, c).value).strip()
+                    if name:
+                        data["signer_name"] = name
+                        break
+
+    return data
+
+
+# ═══════════════════════════════════════════════════════════════════
+# XỬ LÝ Ý KIẾN ĐÓNG GÓP (TÁCH CÂU TRẢ LỜI)
+# ═══════════════════════════════════════════════════════════════════
+
+def parse_open_responses(raw_text):
+    """Tách các câu trả lời mở từ chuỗi nối liền, loại bỏ câu trả lời trống/vô nghĩa."""
+    if not raw_text:
+        return []
+    
+    # Các pattern chỉ "không có ý kiến"
+    skip_patterns = [
+        r'^không\s*(ạ|có|cóa)?\.?$',
+        r'^ko\.?$',
+        r'^khong\.?$',
+        r'^dạ\s*không\s*(ạ|có)?\.?$',
+        r'^không\s*có\s*(góp\s*ý|ý\s*kiến)?\.?$',
+        r'^dạ\s*không\s*có\.?$',
+        r'^không\s*có\s*ý\s*kiến\.?$',
+        r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
+    ]
+    
+    # Thử tách bằng nhiều cách
+    # Cách 1: Tách bằng các cụm keyword phân cách 
+    # (Do Excel gộp tất cả vào 1 ô, cần heuristic để tách)
+    
+    # Tách bằng các chữ cái viết hoa đầu câu sau chữ thường
+    # hoặc tách bằng dấu chấm câu + viết hoa
+    responses = []
+    
+    # Xử lý \r\n
+    raw_text = raw_text.replace("\\r\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    
+    # Tách đơn giản: mỗi câu trả lời thường bắt đầu bằng chữ cái viết hoa
+    # sau khi kết thúc bằng dấu chấm hoặc không có dấu ngắt
+    # Heuristic: tách tại vị trí có chữ cái viết hoa sau chữ cái thường (không phải giữa từ thông thường)
+    
+    # Trước tiên, tách bằng newline
+    parts = raw_text.split("\n")
+    
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        
+        # Tách tiếp bằng pattern: kết thúc câu trước + bắt đầu câu mới
+        # Pattern: sau dấu chấm/không dấu + chữ cái viết hoa
+        sub_parts = re.split(r'(?<=[a-zàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ\.\!\?])\s*(?=[A-ZÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ])', part)
+        
+        for sp in sub_parts:
+            sp = sp.strip().rstrip(".")
+            if not sp or len(sp) < 3:
+                continue
+            
+            # Kiểm tra có phải câu trả lời rỗng/vô nghĩa không
+            is_skip = False
+            for pattern in skip_patterns:
+                if re.match(pattern, sp, re.IGNORECASE):
+                    is_skip = True
+                    break
+            
+            if not is_skip:
+                # Thêm dấu chấm cuối câu nếu chưa có
+                if not sp.endswith(('.', '!', '?')):
+                    sp += '.'
+                # Viết hoa chữ cái đầu
+                sp = sp[0].upper() + sp[1:]
+                responses.append(sp)
+    
+    # Loại bỏ trùng lặp, giữ thứ tự
+    seen = set()
+    unique = []
+    for r in responses:
+        r_lower = r.lower().strip()
+        if r_lower not in seen:
+            seen.add(r_lower)
+            unique.append(r)
+    
+    return unique
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TẠO FILE WORD
+# ═══════════════════════════════════════════════════════════════════
+
+def set_cell_shading(cell, color_hex):
+    """Đặt màu nền cho ô trong bảng Word."""
+    shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>')
+    cell._tc.get_or_add_tcPr().append(shading_elm)
+
+
+def set_cell_border(cell, **kwargs):
+    """Đặt border cho ô bảng."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = parse_xml(f'<w:tcBorders {nsdecls("w")}></w:tcBorders>')
+    for edge, val in kwargs.items():
+        element = parse_xml(
+            f'<w:{edge} {nsdecls("w")} w:val="{val.get("val", "single")}" '
+            f'w:sz="{val.get("sz", "4")}" w:space="0" '
+            f'w:color="{val.get("color", "000000")}"/>'
+        )
+        tcBorders.append(element)
+    tcPr.append(tcBorders)
+
+
+def add_formatted_paragraph(doc, text, bold=False, italic=False, alignment=None, 
+                            font_size=None, font_name=None, space_after=None, space_before=None):
+    """Thêm paragraph với định dạng."""
+    para = doc.add_paragraph()
+    run = para.add_run(text)
+    run.bold = bold
+    run.italic = italic
+    run.font.name = font_name or CONFIG["font_name"]
+    run.font.size = Pt(font_size or CONFIG["font_size"])
+    
+    # Đảm bảo font cho cả ký tự CJK/Vietnamese
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name or CONFIG["font_name"])
+    
+    if alignment is not None:
+        para.alignment = alignment
+    if space_after is not None:
+        para.paragraph_format.space_after = Pt(space_after)
+    if space_before is not None:
+        para.paragraph_format.space_before = Pt(space_before)
+    
+    return para
+
+
+def format_cell_text(cell, text, bold=False, italic=False, font_size=None, alignment=None):
+    """Format text trong ô bảng."""
+    cell.text = ""
+    para = cell.paragraphs[0]
+    run = para.add_run(str(text))
+    run.bold = bold
+    run.font.name = CONFIG["font_name"]
+    run.font.size = Pt(font_size or CONFIG["font_size"])
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    if italic:
+        run.italic = True
+    if alignment is not None:
+        para.alignment = alignment
+
+
+def create_word_report(data, output_path):
+    """Tạo file Word báo cáo từ dữ liệu đã trích xuất."""
+    doc = Document()
+    
+    # --- Cấu hình trang ---
+    section = doc.sections[0]
+    section.page_width = Cm(21)     # A4
+    section.page_height = Cm(29.7)
+    section.left_margin = Cm(2.5)
+    section.right_margin = Cm(2)
+    section.top_margin = Cm(2)
+    section.bottom_margin = Cm(2)
+    
+    # --- Set default font ---
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = CONFIG["font_name"]
+    font.size = Pt(CONFIG["font_size"])
+    
+    # ===== HEADER: Bảng tiêu đề =====
+    header_table = doc.add_table(rows=1, cols=2)
+    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    
+    # Cột trái: Tên trường + khoa
+    left_cell = header_table.cell(0, 0)
+    left_text = f"{CONFIG['university_name']}\n{CONFIG['faculty_name']}"
+    format_cell_text(left_cell, left_text, bold=False, font_size=12, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    
+    # Cột phải: Quốc hiệu
+    right_cell = header_table.cell(0, 1)
+    right_cell.text = ""
+    p = right_cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    run1 = p.add_run(CONFIG["country_header"])
+    run1.bold = True
+    run1.font.name = CONFIG["font_name"]
+    run1.font.size = Pt(12)
+    run1._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    
+    p2 = right_cell.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run2 = p2.add_run(CONFIG["country_slogan"])
+    run2.italic = True
+    run2.font.name = CONFIG["font_name"]
+    run2.font.size = Pt(12)
+    run2._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    
+    # Xóa border header table
+    for row in header_table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                pass  # Keep as is
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            tcBorders = parse_xml(
+                f'<w:tcBorders {nsdecls("w")}>'
+                f'  <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'</w:tcBorders>'
+            )
+            tcPr.append(tcBorders)
+    
+    doc.add_paragraph()  # Spacer
+    
+    # ===== TIÊU ĐỀ BÁO CÁO =====
+    for line in CONFIG["report_title_lines"]:
+        add_formatted_paragraph(doc, line, bold=True, font_size=12,
+                                alignment=WD_ALIGN_PARAGRAPH.CENTER, space_after=0)
+    
+    doc.add_paragraph()  # Spacer
+    
+    # ===== PHẦN 1: THÔNG TIN CHUNG =====
+    add_formatted_paragraph(doc, "Phần 1. Thông tin chung", bold=True, font_size=12, space_after=6)
+    
+    meta = data["meta"]
+    
+    # Trích xuất tên môn học và mã
+    mon_hoc = meta.get("mon_hoc", "")
+    mon_hoc_match = re.match(r'(\d+)\s*-\s*(.*)', mon_hoc)
+    if mon_hoc_match:
+        ma_mon = mon_hoc_match.group(1).strip()
+        ten_mon = mon_hoc_match.group(2).strip()
+        mon_display = f"{ten_mon} ({ma_mon})"
+    else:
+        mon_display = mon_hoc
+    
+    lop_hoc = meta.get("lop_hoc", "")
+    thoi_gian = meta.get("thoi_gian_ks", "")
+    phieu_ks = meta.get("phieu_khao_sat", "")
+    
+    # Tổng SV
+    total_sv = 0
+    if data["survey_questions"]:
+        total_sv = data["survey_questions"][0].get("total", 0)
+    
+    info_lines = [
+        ("Module/học phần khảo sát: ", mon_display, True),
+        ("Thời gian khảo sát: ", thoi_gian, False),
+        ("Đối tượng khảo sát: ", lop_hoc, True),
+        ("Mẫu khảo sát: ", phieu_ks, False),
+        (f"Tổng số người học môn học/học phần được khảo sát: ", str(total_sv), False),
+        (f"Tổng số người học được lấy ý kiến: ", str(total_sv), False),
+        (f"Tỷ lệ người học được lấy ý kiến: ", "100%", False),
+    ]
+    
+    for label, value, value_bold in info_lines:
+        para = doc.add_paragraph()
+        run_label = para.add_run(label)
+        run_label.font.name = CONFIG["font_name"]
+        run_label.font.size = Pt(CONFIG["font_size"])
+        run_label._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+        
+        run_val = para.add_run(value)
+        run_val.bold = value_bold
+        run_val.font.name = CONFIG["font_name"]
+        run_val.font.size = Pt(CONFIG["font_size"])
+        run_val._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+        
+        para.paragraph_format.space_after = Pt(2)
+    
+    # ===== PHẦN 2: KẾT QUẢ KHẢO SÁT =====
+    add_formatted_paragraph(doc, "Phần 2. Kết quả khảo sát", bold=True, font_size=12, 
+                            space_before=12, space_after=6)
+    
+    # --- 2.1 Thông tin nền ---
+    add_formatted_paragraph(doc, "2.1. Thông tin nền", bold=True, font_size=12, space_after=6)
+    
+    bg = data["background_info"]
+    if bg:
+        # Tạo bảng thông tin nền
+        bg_table = doc.add_table(rows=1, cols=4)
+        bg_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        bg_table.style = 'Table Grid'
+        
+        # Header
+        headers = ["", "", "Số lượng", "Tỷ lệ (%)"]
+        for i, h in enumerate(headers):
+            format_cell_text(bg_table.cell(0, i), h, bold=True, font_size=11,
+                            alignment=WD_ALIGN_PARAGRAPH.CENTER)
+            set_cell_shading(bg_table.cell(0, i), "D9E2F3")
+        
+        # Mapping thông tin nền
+        bg_mapping = {
+            "Hình thức đào tạo": {"labels": ["Chính quy", "Khác"], "col_indices": [0, 1]},
+            "Giới tính": {"labels": ["Nam", "Nữ"], "col_indices": [0, 1]},
+            "Dân tộc thiểu số": {"labels": ["Có", "Không"], "col_indices": [0, 1]},
+            "Sinh viên nước ngoài": {"labels": ["Có", "Không"], "col_indices": [0, 1]},
+        }
+        
+        for bg_item in bg:
+            label = bg_item["label"]
+            counts = bg_item["counts"]
+            pcts = bg_item["percentages"]
+            
+            # Tìm mapping phù hợp
+            matched_key = None
+            for key in bg_mapping:
+                if key.lower() in label.lower():
+                    matched_key = key
+                    break
+            
+            if matched_key:
+                mapping = bg_mapping[matched_key]
+                for j, sub_label in enumerate(mapping["labels"]):
+                    row = bg_table.add_row()
+                    
+                    if j == 0:
+                        format_cell_text(row.cells[0], matched_key, font_size=11)
+                    else:
+                        format_cell_text(row.cells[0], "", font_size=11)
+                    
+                    format_cell_text(row.cells[1], sub_label, font_size=11)
+                    
+                    idx = mapping["col_indices"][j]
+                    count_val = int(counts[idx]) if idx < len(counts) else 0
+                    pct_val = pcts[idx] * 100 if idx < len(pcts) else 0
+                    
+                    format_cell_text(row.cells[2], str(count_val), font_size=11,
+                                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                    format_cell_text(row.cells[3], f"{pct_val:.2f}%", font_size=11,
+                                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        
+        # Merge ô trùng lặp ở cột đầu tiên
+        # (Thực hiện merge vertical cho các ô cùng nhóm)
+        row_idx = 1  # Bỏ qua header
+        for bg_item in bg:
+            label = bg_item["label"]
+            matched_key = None
+            for key in bg_mapping:
+                if key.lower() in label.lower():
+                    matched_key = key
+                    break
+            if matched_key:
+                n_rows = len(bg_mapping[matched_key]["labels"])
+                if n_rows > 1 and row_idx + n_rows - 1 < len(bg_table.rows):
+                    # Merge cells
+                    a = bg_table.cell(row_idx, 0)
+                    b = bg_table.cell(row_idx + n_rows - 1, 0)
+                    a.merge(b)
+                    # Center text vertically
+                    for para in a.paragraphs:
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                row_idx += n_rows
+    
+    doc.add_paragraph()  # Spacer
+    
+    # --- 2.2 Thông tin cụ thể ---
+    add_formatted_paragraph(doc, "2.2. Thông tin cụ thể", bold=True, font_size=12, space_after=2)
+    
+    para_note = doc.add_paragraph()
+    para_note.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run_note = para_note.add_run("Báo cáo tỉ lệ phần trăm phản hồi của sinh viên ở từng tiêu chí")
+    run_note.italic = True
+    run_note.font.name = CONFIG["font_name"]
+    run_note.font.size = Pt(CONFIG["font_size"])
+    run_note._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    
+    # Tạo bảng kết quả khảo sát
+    questions = data["survey_questions"]
+    if questions:
+        # Tính số dòng = header + section headers + questions
+        # Phân chia thành sections dựa trên số lượng câu hỏi
+        n_q = len(questions)
+        
+        # Tạo sections tự động
+        sections = []
+        if n_q <= 10:
+            sections = [{"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": n_q}]
+        elif n_q <= 14:
+            sections = [
+                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
+                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": n_q},
+            ]
+        elif n_q <= 18:
+            sections = [
+                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
+                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": 14},
+                {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "start": 14, "end": n_q},
+            ]
+        else:
+            sections = [
+                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
+                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": 14},
+                {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "start": 14, "end": 18},
+                {"name": "IV. CẢM NHẬN CHUNG", "start": 18, "end": n_q},
+            ]
+        
+        total_rows = 1 + len(sections) + n_q  # header + section headers + questions
+        survey_table = doc.add_table(rows=total_rows, cols=8)
+        survey_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        survey_table.style = 'Table Grid'
+        
+        # Set column widths
+        for row in survey_table.rows:
+            row.cells[0].width = Cm(1)      # TT
+            row.cells[1].width = Cm(7)      # Nội dung
+            row.cells[2].width = Cm(1.8)    # Mức 1
+            row.cells[3].width = Cm(1.8)    # Mức 2
+            row.cells[4].width = Cm(1.8)    # Mức 3
+            row.cells[5].width = Cm(1.8)    # Mức 4
+            row.cells[6].width = Cm(1.8)    # Mức 5
+            row.cells[7].width = Cm(1.5)    # Điểm TB
+        
+        # Header row
+        header_row = survey_table.rows[0]
+        header_texts = ["TT", "Nội dung đánh giá"] + CONFIG["scale_labels"] + ["Điểm trung bình"]
+        for i, h in enumerate(header_texts):
+            format_cell_text(header_row.cells[i], h, bold=True, font_size=10,
+                            alignment=WD_ALIGN_PARAGRAPH.CENTER)
+            set_cell_shading(header_row.cells[i], "D9E2F3")
+        
+        # Fill data
+        current_row = 1
+        question_counter = 1
+        
+        for sec in sections:
+            # Section header row
+            sec_row = survey_table.rows[current_row]
+            
+            # Merge all columns for section header
+            a = sec_row.cells[0]
+            b = sec_row.cells[7]
+            a.merge(b)
+            format_cell_text(sec_row.cells[0], sec["name"], bold=True, italic=True, 
+                            font_size=11)
+            set_cell_shading(sec_row.cells[0], "F2F2F2")
+            current_row += 1
+            
+            # Question rows
+            for qi in range(sec["start"], sec["end"]):
+                if qi >= len(questions):
+                    break
+                q = questions[qi]
+                q_row = survey_table.rows[current_row]
+                
+                # TT
+                format_cell_text(q_row.cells[0], str(question_counter), font_size=10,
+                                alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                
+                # Nội dung - Thêm mã câu hỏi
+                q_label = f"C{q['number']}. " if q['number'] else ""
+                format_cell_text(q_row.cells[1], f"{q_label}{q['text']}", font_size=10)
+                
+                # Tỷ lệ % cho 5 mức
+                for j in range(5):
+                    if j < len(q["percentages"]):
+                        pct = q["percentages"][j] * 100
+                        format_cell_text(q_row.cells[2 + j], f"{pct:.2f}%", font_size=10,
+                                        alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                    else:
+                        format_cell_text(q_row.cells[2 + j], "0.00%", font_size=10,
+                                        alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                
+                # Điểm trung bình
+                format_cell_text(q_row.cells[7], f"{q['average']:.2f}", font_size=10,
+                                alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                
+                # Highlight low scores (< 4.0)
+                if q['average'] < 4.0:
+                    set_cell_shading(q_row.cells[7], "FFCCCC")
+                elif q['average'] >= 4.5:
+                    set_cell_shading(q_row.cells[7], "CCFFCC")
+                
+                question_counter += 1
+                current_row += 1
+    
+    doc.add_paragraph()  # Spacer
+    
+    # ===== PHẦN 3: Ý KIẾN ĐÓNG GÓP =====
+    add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
+                            bold=True, font_size=12, space_after=6)
+    
+    responses = parse_open_responses(data["open_responses"])
+    if responses:
+        combined_text = " ".join(responses)
+        para = doc.add_paragraph()
+        run = para.add_run(combined_text)
+        run.font.name = CONFIG["font_name"]
+        run.font.size = Pt(CONFIG["font_size"])
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+        para.paragraph_format.space_after = Pt(6)
+    else:
+        add_formatted_paragraph(doc, "Không có ý kiến đóng góp.", italic=True)
+    
+    doc.add_paragraph()  # Spacer
+    
+    # ===== PHẦN 4: ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN =====
+    add_formatted_paragraph(doc, "Phần 4. Đề xuất kế hoạch cải tiến:", 
+                            bold=True, font_size=12, space_after=2)
+    
+    para_note2 = doc.add_paragraph()
+    run_n2 = para_note2.add_run(
+        "(Bộ môn, đơn vị đào tạo đề xuất kế hoạch cải tiến cho tối thiểu 2 tiêu chí "
+        "trong 18 tiêu chí khảo sát ở trên, không tính phần CẢM NHẬN CHUNG)"
+    )
+    run_n2.font.name = CONFIG["font_name"]
+    run_n2.font.size = Pt(CONFIG["font_size"])
+    run_n2._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    
+    # Bảng cải tiến (để trống cho người dùng điền)
+    improve_table = doc.add_table(rows=4, cols=4)
+    improve_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    improve_table.style = 'Table Grid'
+    
+    improve_headers = [
+        "Tiêu chí\nmuốn cải tiến",
+        "Lý do sinh viên chưa hài lòng",
+        "Mục tiêu cải tiến cho năm sau",
+        "Giải pháp đề xuất",
+    ]
+    for i, h in enumerate(improve_headers):
+        format_cell_text(improve_table.cell(0, i), h, bold=True, font_size=11,
+                        alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        set_cell_shading(improve_table.cell(0, i), "D9E2F3")
+    
+    # Tự động điền 2 tiêu chí có điểm TB thấp nhất (nếu có)
+    if questions:
+        sorted_qs = sorted(questions, key=lambda x: x['average'])
+        for row_i in range(1, min(4, len(sorted_qs) + 1)):
+            q = sorted_qs[row_i - 1]
+            cell_text = f"C{q['number']}. {q['text'][:50]}... (TB: {q['average']:.2f})"
+            format_cell_text(improve_table.cell(row_i, 0), cell_text, font_size=10)
+    
+    # Set minimum row height for improvement table
+    for row in improve_table.rows[1:]:
+        row.height = Cm(2.5)
+    
+    doc.add_paragraph()  # Spacer
+    doc.add_paragraph()  # Spacer
+    
+    # ===== FOOTER: Ký tên =====
+    footer_table = doc.add_table(rows=4, cols=2)
+    footer_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    
+    # Xóa border
+    for row in footer_table.rows:
+        for cell in row.cells:
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            tcBorders = parse_xml(
+                f'<w:tcBorders {nsdecls("w")}>'
+                f'  <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'  <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                f'</w:tcBorders>'
+            )
+            tcPr.append(tcBorders)
+    
+    # Ngày tháng (bên phải)
+    date_text = data["signer_date"] if data["signer_date"] else "TP. HCM, ngày ... tháng ... năm ..."
+    format_cell_text(footer_table.cell(0, 1), date_text, font_size=12,
+                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    
+    # Dòng trống
+    format_cell_text(footer_table.cell(1, 0), "", font_size=12)
+    format_cell_text(footer_table.cell(1, 1), "Người lập", bold=True, font_size=12,
+                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    
+    # Dòng trống cho chữ ký
+    format_cell_text(footer_table.cell(2, 0), "", font_size=12)
+    format_cell_text(footer_table.cell(2, 1), "", font_size=12)
+    
+    # Cột trái: TRƯỞNG MODULE
+    format_cell_text(footer_table.cell(3, 0), "TRƯỞNG MODULE/ BỘ MÔN", bold=True, font_size=12,
+                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    
+    # Tên người lập
+    signer = data["signer_name"] if data["signer_name"] else ""
+    format_cell_text(footer_table.cell(3, 1), signer, bold=True, font_size=12,
+                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    
+    # --- Lưu file ---
+    doc.save(output_path)
+    return output_path
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TỔNG HỢP NHIỀU SHEET
+# ═══════════════════════════════════════════════════════════════════
+
+def merge_sheets_data(all_data_list):
+    """Gộp dữ liệu từ nhiều sheet thành 1 bộ dữ liệu tổng hợp."""
+    if not all_data_list:
+        return None
+    if len(all_data_list) == 1:
+        return all_data_list[0]
+    
+    base = all_data_list[0]
+    merged = {
+        "meta": dict(base["meta"]),
+        "background_info": [],
+        "survey_questions": [],
+        "open_responses": "",
+        "signer_name": base.get("signer_name", ""),
+        "signer_date": base.get("signer_date", ""),
+        "sheet_names": [],  # Danh sách tên lớp/sheet
+    }
+    
+    # Thu thập tên các lớp
+    for d in all_data_list:
+        lop = d["meta"].get("lop_hoc", d["meta"].get("dot_khao_sat", ""))
+        merged["sheet_names"].append(lop)
+    
+    merged["meta"]["lop_hoc"] = ", ".join(filter(None, merged["sheet_names"]))
+    
+    # === Gộp thông tin nền: cộng dồn số lượng ===
+    n_bg = len(base["background_info"])
+    for i in range(n_bg):
+        item = {
+            "label": base["background_info"][i]["label"],
+            "counts": list(base["background_info"][i]["counts"]),
+            "percentages": [],
+        }
+        for d in all_data_list[1:]:
+            if i < len(d["background_info"]):
+                for j in range(len(item["counts"])):
+                    if j < len(d["background_info"][i]["counts"]):
+                        item["counts"][j] += d["background_info"][i]["counts"][j]
+        # Tính lại tổng (cột cuối) và tỷ lệ
+        # counts thường có format: [val1, val2, ..., empty, empty, total]
+        # Với thông tin nền 2 cột: [chính_quy, khác, 0, 0, 0, tổng]
+        # Lấy 2 giá trị đầu làm dữ liệu, cột cuối là tổng
+        if len(item["counts"]) >= 2:
+            # Recalculate total = sum of first N-1 non-zero position values
+            # For bg info: chỉ có 2 giá trị đầu là có nghĩa
+            sub_total = item["counts"][0] + item["counts"][1]
+            item["counts"][-1] = sub_total  # Cập nhật tổng
+        total = item["counts"][-1] if item["counts"] else 1
+        if total > 0:
+            item["percentages"] = [c / total for c in item["counts"]]
+        else:
+            item["percentages"] = [0] * len(item["counts"])
+        merged["background_info"].append(item)
+    
+    # === Gộp câu hỏi: cộng dồn counts, tính lại % và TB ===
+    n_q = len(base["survey_questions"])
+    for i in range(n_q):
+        bq = base["survey_questions"][i]
+        q = {
+            "number": bq["number"],
+            "text": bq["text"],
+            "counts": list(bq["counts"]),
+            "total": bq["total"],
+            "percentages": [],
+            "average": 0,
+        }
+        for d in all_data_list[1:]:
+            if i < len(d["survey_questions"]):
+                dq = d["survey_questions"][i]
+                for j in range(len(q["counts"])):
+                    if j < len(dq["counts"]):
+                        q["counts"][j] += dq["counts"][j]
+                q["total"] += dq["total"]
+        
+        # Tính lại tỷ lệ và điểm TB
+        if q["total"] > 0:
+            q["percentages"] = [c / q["total"] for c in q["counts"]]
+            if len(q["counts"]) == 5:
+                q["average"] = round(sum((j + 1) * q["counts"][j] for j in range(5)) / q["total"], 2)
+        else:
+            q["percentages"] = [0] * len(q["counts"])
+        
+        merged["survey_questions"].append(q)
+    
+    # === Gộp ý kiến mở ===
+    all_responses = []
+    for d in all_data_list:
+        if d["open_responses"]:
+            all_responses.append(d["open_responses"])
+    merged["open_responses"] = "\n".join(all_responses)
+    
+    return merged
+
+
+def get_sheet_count(filepath):
+    """Đếm số sheet trong file Excel."""
+    wb = xlrd.open_workbook(filepath)
+    return wb.nsheets, wb.sheet_names()
+
+
+def process_file(input_path, output_dir=None):
+    """Xử lý 1 file Excel -> Word. Nếu nhiều sheet thì tạo thêm file tổng."""
+    if not os.path.exists(input_path):
+        print(f"  ❌ File không tồn tại: {input_path}")
+        return None
+    
+    basename = os.path.splitext(os.path.basename(input_path))[0]
+    out_dir = output_dir or os.path.dirname(input_path)
+    os.makedirs(out_dir, exist_ok=True)
+    
+    print(f"  📄 Đang xử lý: {os.path.basename(input_path)}")
+    
+    try:
+        n_sheets, sheet_names = get_sheet_count(input_path)
+        print(f"     ├─ Số sheet: {n_sheets}")
+        
+        all_data = []
+        outputs = []
+        
+        for si in range(n_sheets):
+            data = extract_data_from_excel(input_path, sheet_index=si)
+            
+            # Bỏ qua sheet rỗng (không có câu hỏi khảo sát)
+            if not data["survey_questions"]:
+                print(f"     ├─ Sheet {si} \"{sheet_names[si]}\": ⏭ bỏ qua (không có dữ liệu)")
+                continue
+            
+            all_data.append(data)
+            
+            n_q = len(data["survey_questions"])
+            n_resp = len(parse_open_responses(data["open_responses"]))
+            lop = data["meta"].get("lop_hoc", sheet_names[si])
+            
+            if n_sheets > 1:
+                # Nhiều sheet -> tạo file riêng cho từng sheet
+                sheet_output = os.path.join(out_dir, f"{basename}_sheet{si + 1}.docx")
+                create_word_report(data, sheet_output)
+                outputs.append(sheet_output)
+                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {n_resp} ý kiến → {os.path.basename(sheet_output)}")
+            else:
+                # 1 sheet -> tạo file bình thường
+                sheet_output = os.path.join(out_dir, f"{basename}.docx")
+                create_word_report(data, sheet_output)
+                outputs.append(sheet_output)
+                print(f"     ├─ {n_q} câu hỏi, {n_resp} ý kiến mở")
+        
+        # === TẠO FILE TỔNG HỢP nếu nhiều sheet ===
+        if len(all_data) > 1:
+            merged = merge_sheets_data(all_data)
+            if merged:
+                summary_output = os.path.join(out_dir, f"{basename}_TONG_HOP.docx")
+                create_word_report(merged, summary_output)
+                outputs.append(summary_output)
+                
+                total_sv = merged["survey_questions"][0]["total"] if merged["survey_questions"] else 0
+                print(f"     ├─ 📊 TỔNG HỢP: {len(all_data)} lớp, {total_sv} SV → {os.path.basename(summary_output)}")
+        
+        if outputs:
+            print(f"     └─ ✅ Tạo {len(outputs)} file thành công")
+            return outputs
+        else:
+            print(f"     └─ ⚠️ Không có sheet nào chứa dữ liệu khảo sát")
+            return None
+    
+    except Exception as e:
+        print(f"     └─ ❌ Lỗi: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Tổng hợp kết quả khảo sát từ Excel (.xls) sang Word (.docx)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ví dụ sử dụng:
+  python3 excel_to_word.py                            # Xử lý tất cả .xls trong thư mục hiện tại
+  python3 excel_to_word.py "file1.xls" "file2.xls"    # Xử lý các file cụ thể  
+  python3 excel_to_word.py --input-dir ./data          # Xử lý tất cả .xls trong thư mục ./data
+  python3 excel_to_word.py --output-dir ./output       # Lưu kết quả vào ./output
+        """
+    )
+    parser.add_argument("files", nargs="*", help="Danh sách file Excel (.xls) cần xử lý")
+    parser.add_argument("--input-dir", "-i", help="Thư mục chứa file Excel đầu vào")
+    parser.add_argument("--output-dir", "-o", help="Thư mục lưu file Word đầu ra")
+    
+    args = parser.parse_args()
+    
+    # Thu thập danh sách file cần xử lý
+    files_to_process = []
+    
+    if args.files:
+        files_to_process = [os.path.abspath(f) for f in args.files]
+    elif args.input_dir:
+        pattern = os.path.join(args.input_dir, "*.xls")
+        files_to_process = sorted(glob.glob(pattern))
+        # Cũng tìm .xlsx
+        pattern2 = os.path.join(args.input_dir, "*.xlsx")
+        files_to_process += sorted(glob.glob(pattern2))
+    else:
+        # Mặc định: tìm tất cả .xls trong thư mục hiện tại
+        files_to_process = sorted(glob.glob("*.xls"))
+        files_to_process += sorted(glob.glob("*.xlsx"))
+    
+    # Loại bỏ file output (*.docx) khỏi danh sách nếu có
+    files_to_process = [f for f in files_to_process if f.endswith(('.xls', '.xlsx'))]
+    
+    if not files_to_process:
+        print("⚠️  Không tìm thấy file Excel nào để xử lý.")
+        print("   Sử dụng: python3 excel_to_word.py --help để xem hướng dẫn")
+        return
+    
+    print(f"{'═' * 60}")
+    print(f"  📊 TỔNG HỢP KHẢO SÁT EXCEL → WORD")
+    print(f"  Số file cần xử lý: {len(files_to_process)}")
+    print(f"{'═' * 60}")
+    
+    success = 0
+    failed = 0
+    
+    for filepath in files_to_process:
+        print()
+        result = process_file(filepath, args.output_dir)
+        if result:
+            success += 1
+        else:
+            failed += 1
+    
+    print(f"\n{'═' * 60}")
+    print(f"  📋 KẾT QUẢ: {success} thành công, {failed} thất bại / {len(files_to_process)} file")
+    print(f"{'═' * 60}")
+
+
+if __name__ == "__main__":
+    main()
