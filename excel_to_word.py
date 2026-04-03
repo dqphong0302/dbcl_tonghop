@@ -727,14 +727,14 @@ def create_word_report(data, output_path):
                 q_label = f"C{q['number']}. " if q['number'] else ""
                 format_cell_text(q_row.cells[1], f"{q_label}{q['text']}", font_size=10)
                 
-                # Tỷ lệ % cho 5 mức
+                # Tỷ lệ % cho 5 mức (làm tròn không thập phân)
                 for j in range(5):
                     if j < len(q["percentages"]):
-                        pct = q["percentages"][j] * 100
-                        format_cell_text(q_row.cells[2 + j], f"{pct:.2f}%", font_size=10,
+                        pct = round(q["percentages"][j] * 100)
+                        format_cell_text(q_row.cells[2 + j], f"{pct}%", font_size=10,
                                         alignment=WD_ALIGN_PARAGRAPH.CENTER)
                     else:
-                        format_cell_text(q_row.cells[2 + j], "0.00%", font_size=10,
+                        format_cell_text(q_row.cells[2 + j], "0%", font_size=10,
                                         alignment=WD_ALIGN_PARAGRAPH.CENTER)
                 
                 # Điểm trung bình
@@ -752,23 +752,14 @@ def create_word_report(data, output_path):
     
     doc.add_paragraph()  # Spacer
     
-    # ===== PHẦN 3: Ý KIẾN ĐÓNG GÓP =====
+    # ===== PHẦN 3: Ý KIẾN ĐÓNG GÓP (để trống) =====
     add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
                             bold=True, font_size=12, space_after=6)
     
-    responses = parse_open_responses(data["open_responses"])
-    if responses:
-        combined_text = " ".join(responses)
-        para = doc.add_paragraph()
-        run = para.add_run(combined_text)
-        run.font.name = CONFIG["font_name"]
-        run.font.size = Pt(CONFIG["font_size"])
-        run._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
-        para.paragraph_format.space_after = Pt(6)
-    else:
-        add_formatted_paragraph(doc, "Không có ý kiến đóng góp.", italic=True)
+    # Để trống - thêm vài dòng trắng
+    for _ in range(4):
+        doc.add_paragraph()
     
-    doc.add_paragraph()  # Spacer
     
     # ===== PHẦN 4: ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN =====
     add_formatted_paragraph(doc, "Phần 4. Đề xuất kế hoạch cải tiến:", 
@@ -799,13 +790,7 @@ def create_word_report(data, output_path):
                         alignment=WD_ALIGN_PARAGRAPH.CENTER)
         set_cell_shading(improve_table.cell(0, i), "D9E2F3")
     
-    # Tự động điền 2 tiêu chí có điểm TB thấp nhất (nếu có)
-    if questions:
-        sorted_qs = sorted(questions, key=lambda x: x['average'])
-        for row_i in range(1, min(4, len(sorted_qs) + 1)):
-            q = sorted_qs[row_i - 1]
-            cell_text = f"C{q['number']}. {q['text'][:50]}... (TB: {q['average']:.2f})"
-            format_cell_text(improve_table.cell(row_i, 0), cell_text, font_size=10)
+    # Để trống bảng cải tiến cho người dùng tự điền
     
     # Set minimum row height for improvement table
     for row in improve_table.rows[1:]:
