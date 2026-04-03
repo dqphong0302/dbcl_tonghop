@@ -464,8 +464,14 @@ def create_word_report(data, output_path):
     
     # Cột trái: Tên trường + khoa
     left_cell = header_table.cell(0, 0)
-    left_text = f"{CONFIG['university_name']}\n{CONFIG['faculty_name']}"
-    format_cell_text(left_cell, left_text, bold=False, font_size=12, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    format_cell_text(left_cell, CONFIG['university_name'], bold=False, font_size=12, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_faculty = left_cell.add_paragraph()
+    p_faculty.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_fac = p_faculty.add_run(CONFIG['faculty_name'])
+    run_fac.bold = True
+    run_fac.font.name = CONFIG["font_name"]
+    run_fac.font.size = Pt(12)
+    run_fac._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
     
     # Cột phải: Quốc hiệu
     right_cell = header_table.cell(0, 1)
