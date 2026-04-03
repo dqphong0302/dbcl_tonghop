@@ -189,7 +189,7 @@ class App(tk.Tk):
                                 bg=COLORS["log_bg"], fg=COLORS["text"],
                                 insertbackground=COLORS["text"],
                                 selectbackground=COLORS["accent"],
-                                relief="flat", padx=12, pady=8,
+                                relief="flat", bd=8,
                                 state="disabled", height=8)
         
         scrollbar = tk.Scrollbar(log_container, command=self.log_text.yview,
@@ -261,8 +261,8 @@ class App(tk.Tk):
                                        selectbackground=COLORS["accent"],
                                        selectforeground="#fff",
                                        highlightthickness=0,
-                                       relief="flat", bd=0, padx=8, pady=4)
-        self.file_listbox.pack(fill="x")
+                                       relief="flat", bd=0)
+        self.file_listbox.pack(fill="x", padx=8, pady=4)
     
     def _build_output_area(self, parent):
         row = tk.Frame(parent, bg=COLORS["bg_card"])
