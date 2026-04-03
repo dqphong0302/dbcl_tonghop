@@ -266,7 +266,8 @@ def extract_data_from_excel(filepath, sheet_index=0):
         for c in range(sheet.ncols):
             val = str(sheet.cell(r, c).value).strip()
             if "ngày" in val.lower() and "tháng" in val.lower():
-                data["signer_date"] = val.rstrip(" ")
+                fixed_val = val.rstrip(" ").replace(" nam ", " năm ")
+                data["signer_date"] = fixed_val
             if "Người lập" in val:
                 # Tên người lập thường ở vài dòng sau
                 for rr in range(r + 1, min(r + 5, sheet.nrows)):
@@ -434,15 +435,32 @@ def create_word_report(data, output_path):
     section.top_margin = Cm(2)
     section.bottom_margin = Cm(2)
     
-    # --- Set default font ---
+    # --- Set default font + giãn dòng ---
     style = doc.styles['Normal']
     font = style.font
     font.name = CONFIG["font_name"]
     font.size = Pt(CONFIG["font_size"])
+    style.paragraph_format.line_spacing = 1.5
+    style.paragraph_format.space_before = Pt(0)
+    style.paragraph_format.space_after = Pt(0)
     
     # ===== HEADER: Bảng tiêu đề =====
     header_table = doc.add_table(rows=1, cols=2)
     header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    
+    # Ép chế độ fixed layout + chiều rộng cột cố định
+    tbl = header_table._tbl
+    tblPr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+    tblLayout = parse_xml(f'<w:tblLayout {nsdecls("w")} w:type="fixed"/>')
+    tblPr.append(tblLayout)
+    
+    # Cột trái 6.5cm, cột phải 10cm (tổng 16.5cm = trang A4 trừ lề)
+    for ci, w_cm in enumerate([6.5, 10]):
+        cell = header_table.cell(0, ci)
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcW = parse_xml(f'<w:tcW {nsdecls("w")} w:w="{int(w_cm * 567)}" w:type="dxa"/>')
+        tcPr.append(tcW)
     
     # Cột trái: Tên trường + khoa
     left_cell = header_table.cell(0, 0)
@@ -468,6 +486,15 @@ def create_word_report(data, output_path):
     run2.font.name = CONFIG["font_name"]
     run2.font.size = Pt(12)
     run2._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    
+    # Ngày tháng năm
+    date_text = data["signer_date"] if data["signer_date"] else "Thành phố Hồ Chí Minh, ngày ... tháng ... năm ..."
+    p3 = right_cell.add_paragraph()
+    p3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run3 = p3.add_run(date_text)
+    run3.font.name = CONFIG["font_name"]
+    run3.font.size = Pt(12)
+    run3._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
     
     # Xóa border header table
     for row in header_table.rows:
@@ -520,17 +547,24 @@ def create_word_report(data, output_path):
         total_sv = data["survey_questions"][0].get("total", 0)
     
     info_lines = [
-        ("Module/học phần khảo sát: ", mon_display, True),
-        ("Thời gian khảo sát: ", thoi_gian, False),
-        ("Đối tượng khảo sát: ", lop_hoc, True),
-        ("Mẫu khảo sát: ", phieu_ks, False),
-        (f"Tổng số người học môn học/học phần được khảo sát: ", str(total_sv), False),
-        (f"Tổng số người học được lấy ý kiến: ", str(total_sv), False),
-        (f"Tỷ lệ người học được lấy ý kiến: ", "100%", False),
+        ("Module/học phần khảo sát: ", mon_display, True, False),
+        ("Thời gian khảo sát: ", thoi_gian, False, False),
+        ("Đối tượng khảo sát: ", lop_hoc, True, False),
+        ("Mẫu khảo sát: ", phieu_ks, False, False),
+        (f"Tổng số người học môn học/học phần được khảo sát: ", str(total_sv), False, True),
+        (f"Tổng số người học được lấy ý kiến: ", str(total_sv), False, True),
+        (f"Tỷ lệ người học được lấy ý kiến: ", "100%", False, True),
     ]
     
-    for label, value, value_bold in info_lines:
+    for label, value, value_bold, has_bullet in info_lines:
         para = doc.add_paragraph()
+        if has_bullet:
+            para.paragraph_format.left_indent = Cm(1.27)
+            run_dash = para.add_run("- ")
+            run_dash.font.name = CONFIG["font_name"]
+            run_dash.font.size = Pt(CONFIG["font_size"])
+            run_dash._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+        
         run_label = para.add_run(label)
         run_label.font.name = CONFIG["font_name"]
         run_label.font.size = Pt(CONFIG["font_size"])
@@ -544,6 +578,7 @@ def create_word_report(data, output_path):
         
         para.paragraph_format.space_after = Pt(2)
     
+
     # ===== PHẦN 2: KẾT QUẢ KHẢO SÁT =====
     add_formatted_paragraph(doc, "Phần 2. Kết quả khảo sát", bold=True, font_size=12, 
                             space_before=12, space_after=6)
@@ -631,6 +666,7 @@ def create_word_report(data, output_path):
     doc.add_paragraph()  # Spacer
     
     # --- 2.2 Thông tin cụ thể ---
+    doc.add_page_break()
     add_formatted_paragraph(doc, "2.2. Thông tin cụ thể", bold=True, font_size=12, space_after=2)
     
     para_note = doc.add_paragraph()
@@ -741,12 +777,6 @@ def create_word_report(data, output_path):
                 format_cell_text(q_row.cells[7], f"{q['average']:.2f}", font_size=10,
                                 alignment=WD_ALIGN_PARAGRAPH.CENTER)
                 
-                # Highlight low scores (< 4.0)
-                if q['average'] < 4.0:
-                    set_cell_shading(q_row.cells[7], "FFCCCC")
-                elif q['average'] >= 4.5:
-                    set_cell_shading(q_row.cells[7], "CCFFCC")
-                
                 question_counter += 1
                 current_row += 1
     
@@ -800,7 +830,7 @@ def create_word_report(data, output_path):
     doc.add_paragraph()  # Spacer
     
     # ===== FOOTER: Ký tên =====
-    footer_table = doc.add_table(rows=4, cols=2)
+    footer_table = doc.add_table(rows=3, cols=2)
     footer_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     
     # Xóa border
@@ -818,28 +848,15 @@ def create_word_report(data, output_path):
             )
             tcPr.append(tcBorders)
     
-    # Ngày tháng (bên phải)
-    date_text = data["signer_date"] if data["signer_date"] else "TP. HCM, ngày ... tháng ... năm ..."
-    format_cell_text(footer_table.cell(0, 1), date_text, font_size=12,
+    # Row 0: TRƯỞNG MODULE/TRƯỞNG BỘ MÔN (bên phải)
+    format_cell_text(footer_table.cell(0, 0), "", font_size=12)
+    format_cell_text(footer_table.cell(0, 1), "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN", bold=True, font_size=12,
                     alignment=WD_ALIGN_PARAGRAPH.CENTER)
     
-    # Dòng trống
-    format_cell_text(footer_table.cell(1, 0), "", font_size=12)
-    format_cell_text(footer_table.cell(1, 1), "Người lập", bold=True, font_size=12,
-                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    
-    # Dòng trống cho chữ ký
-    format_cell_text(footer_table.cell(2, 0), "", font_size=12)
-    format_cell_text(footer_table.cell(2, 1), "", font_size=12)
-    
-    # Cột trái: TRƯỞNG MODULE
-    format_cell_text(footer_table.cell(3, 0), "TRƯỞNG MODULE/ BỘ MÔN", bold=True, font_size=12,
-                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    
-    # Tên người lập
-    signer = data["signer_name"] if data["signer_name"] else ""
-    format_cell_text(footer_table.cell(3, 1), signer, bold=True, font_size=12,
-                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    # Row 1-2: Dòng trống cho chữ ký
+    for ri in range(1, 3):
+        format_cell_text(footer_table.cell(ri, 0), "", font_size=12)
+        format_cell_text(footer_table.cell(ri, 1), "", font_size=12)
     
     # --- Lưu file ---
     doc.save(output_path)
