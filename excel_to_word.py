@@ -454,8 +454,8 @@ def create_word_report(data, output_path):
     tblLayout = parse_xml(f'<w:tblLayout {nsdecls("w")} w:type="fixed"/>')
     tblPr.append(tblLayout)
     
-    # Cột trái 6.5cm, cột phải 10cm (tổng 16.5cm = trang A4 trừ lề)
-    for ci, w_cm in enumerate([6.5, 10]):
+    # Cột trái 6cm, cột phải 10.5cm
+    for ci, w_cm in enumerate([6, 10.5]):
         cell = header_table.cell(0, ci)
         tc = cell._tc
         tcPr = tc.get_or_add_tcPr()
@@ -668,11 +668,16 @@ def create_word_report(data, output_path):
                     for para in a.paragraphs:
                         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 row_idx += n_rows
+        
+        # Giảm giãn dòng bảng thông tin nền về 1.0
+        for row in bg_table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para.paragraph_format.line_spacing = 1.0
     
     doc.add_paragraph()  # Spacer
     
     # --- 2.2 Thông tin cụ thể ---
-    doc.add_page_break()
     add_formatted_paragraph(doc, "2.2. Thông tin cụ thể", bold=True, font_size=12, space_after=2)
     
     para_note = doc.add_paragraph()
@@ -721,12 +726,12 @@ def create_word_report(data, output_path):
         # Set column widths
         for row in survey_table.rows:
             row.cells[0].width = Cm(1)      # TT
-            row.cells[1].width = Cm(7)      # Nội dung
-            row.cells[2].width = Cm(1.8)    # Mức 1
-            row.cells[3].width = Cm(1.8)    # Mức 2
-            row.cells[4].width = Cm(1.8)    # Mức 3
-            row.cells[5].width = Cm(1.8)    # Mức 4
-            row.cells[6].width = Cm(1.8)    # Mức 5
+            row.cells[1].width = Cm(9)      # Nội dung (rộng hơn 30%)
+            row.cells[2].width = Cm(1.3)    # Mức 1
+            row.cells[3].width = Cm(1.3)    # Mức 2
+            row.cells[4].width = Cm(1.3)    # Mức 3
+            row.cells[5].width = Cm(1.3)    # Mức 4
+            row.cells[6].width = Cm(1.3)    # Mức 5
             row.cells[7].width = Cm(1.5)    # Điểm TB
         
         # Header row
@@ -785,6 +790,12 @@ def create_word_report(data, output_path):
                 
                 question_counter += 1
                 current_row += 1
+    
+        # Giảm giãn dòng trong bảng khảo sát về 1.0
+        for row in survey_table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para.paragraph_format.line_spacing = 1.0
     
     doc.add_paragraph()  # Spacer
     
