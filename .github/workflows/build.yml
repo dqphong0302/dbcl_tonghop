@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Mac & Windows
 
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install xlrd==2.0.1 python-docx==1.1.2 pyinstaller
 
       - name: Build EXE
         run: pyinstaller build.spec --clean --noconfirm
@@ -27,4 +27,32 @@ jobs:
         with:
           name: TongHopKhaoSat-Windows
           path: dist/TongHopKhaoSat.exe
+          retention-days: 90
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install xlrd==2.0.1 python-docx==1.1.2 pyinstaller
+
+      - name: Build macOS App
+        run: pyinstaller build_mac.spec --clean --noconfirm
+
+      - name: Create ZIP from .app
+        run: |
+          cd dist
+          zip -r TongHopKhaoSat-Mac.zip TongHopKhaoSat.app
+
+      - name: Upload macOS App
+        uses: actions/upload-artifact@v4
+        with:
+          name: TongHopKhaoSat-Mac
+          path: dist/TongHopKhaoSat-Mac.zip
           retention-days: 90

@@ -442,6 +442,10 @@ class App(tk.Tk):
                     n_resp = len(parse_open_responses(data["open_responses"]))
                     lop = data["meta"].get("lop_hoc", sheet_names[si])
                     
+                    # Hiển thị cảnh báo (ví dụ: ô F5 trống)
+                    for warn_msg in data.get("warnings", []):
+                        self._log(f"   {warn_msg}", "warning")
+                    
                     if n_sheets > 1:
                         out_path = os.path.join(out_dir, f"{basename}_sheet{si + 1}.docx")
                         create_word_report(data, out_path)

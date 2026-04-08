@@ -80,7 +80,28 @@ def extract_data_from_excel(filepath, sheet_index=0):
         "open_responses": "",     # Câu hỏi mở
         "signer_name": "",        # Người lập
         "signer_date": "",        # Ngày lập
+        "warnings": [],           # Danh sách cảnh báo
     }
+    
+    # --- Trích xuất tổng số sinh viên từ ô F5 (row 4, col 5, 0-indexed) ---
+    tong_so_sv = None
+    if sheet.nrows > 4 and sheet.ncols > 5:
+        f5_val = sheet.cell(4, 5).value  # F5 = row index 4, col index 5
+        if f5_val is not None and str(f5_val).strip() != "":
+            try:
+                tong_so_sv = int(float(f5_val))
+                data["meta"]["tong_so_sv"] = tong_so_sv
+            except (ValueError, TypeError):
+                data["warnings"].append(
+                    f"⚠️ Ô F5 có giá trị '{f5_val}' nhưng không phải số. "
+                    f"Không thể tính tỷ lệ khảo sát."
+                )
+    
+    if tong_so_sv is None:
+        data["warnings"].append(
+            "⚠️ Ô F5 (Tổng số sinh viên) đang trống! "
+            "Không thể tính tỷ lệ phiếu khảo sát trên tổng số sinh viên."
+        )
     
     # --- Trích xuất metadata từ header ---
     for r in range(min(10, sheet.nrows)):
@@ -547,19 +568,31 @@ def create_word_report(data, output_path):
     thoi_gian = meta.get("thoi_gian_ks", "")
     phieu_ks = meta.get("phieu_khao_sat", "")
     
-    # Tổng SV
-    total_sv = 0
+    # Tổng SV phản hồi (từ dữ liệu khảo sát)
+    total_phieu = 0
     if data["survey_questions"]:
-        total_sv = data["survey_questions"][0].get("total", 0)
+        total_phieu = data["survey_questions"][0].get("total", 0)
+    
+    # Tổng SV đăng ký (từ ô F5)
+    tong_so_sv = meta.get("tong_so_sv", None)
+    
+    # Tính tỷ lệ khảo sát
+    if tong_so_sv and tong_so_sv > 0:
+        ty_le = total_phieu / tong_so_sv * 100
+        ty_le_str = f"{ty_le:.1f}%"
+        tong_sv_display = str(tong_so_sv)
+    else:
+        ty_le_str = f"{total_phieu}/{total_phieu} (100%)" if total_phieu > 0 else "N/A"
+        tong_sv_display = str(total_phieu)  # Fallback: dùng số phiếu khảo sát
     
     info_lines = [
         ("Module/học phần khảo sát: ", mon_display, True, False),
         ("Thời gian khảo sát: ", thoi_gian, False, False),
         ("Đối tượng khảo sát: ", lop_hoc, True, False),
         ("Mẫu khảo sát: ", phieu_ks, False, False),
-        (f"Tổng số người học môn học/học phần được khảo sát: ", str(total_sv), False, True),
-        (f"Tổng số người học được lấy ý kiến: ", str(total_sv), False, True),
-        (f"Tỷ lệ người học được lấy ý kiến: ", "100%", False, True),
+        (f"Tổng số người học môn học/học phần được khảo sát: ", tong_sv_display, False, True),
+        (f"Tổng số người học được lấy ý kiến: ", str(total_phieu), False, True),
+        (f"Tỷ lệ người học được lấy ý kiến: ", ty_le_str, False, True),
     ]
     
     for label, value, value_bold, has_bullet in info_lines:
@@ -900,6 +933,7 @@ def merge_sheets_data(all_data_list):
         "signer_name": base.get("signer_name", ""),
         "signer_date": base.get("signer_date", ""),
         "sheet_names": [],  # Danh sách tên lớp/sheet
+        "warnings": [],     # Gộp cảnh báo
     }
     
     # Thu thập tên các lớp
@@ -908,6 +942,23 @@ def merge_sheets_data(all_data_list):
         merged["sheet_names"].append(lop)
     
     merged["meta"]["lop_hoc"] = ", ".join(filter(None, merged["sheet_names"]))
+    
+    # Gộp tổng số SV (F5) từ tất cả sheet
+    total_tong_sv = 0
+    has_any_tong_sv = False
+    for d in all_data_list:
+        sv = d["meta"].get("tong_so_sv", None)
+        if sv is not None:
+            total_tong_sv += sv
+            has_any_tong_sv = True
+    
+    if has_any_tong_sv:
+        merged["meta"]["tong_so_sv"] = total_tong_sv
+    else:
+        merged["warnings"].append(
+            "⚠️ Không có sheet nào có ô F5 (Tổng số sinh viên). "
+            "Không thể tính tỷ lệ khảo sát tổng hợp."
+        )
     
     # === Gộp thông tin nền: cộng dồn số lượng ===
     n_bg = len(base["background_info"])
@@ -1012,6 +1063,10 @@ def process_file(input_path, output_dir=None):
                 continue
             
             all_data.append(data)
+            
+            # Hiển thị cảnh báo (ô F5 trống, v.v.)
+            for warn_msg in data.get("warnings", []):
+                print(f"     ├─ {warn_msg}")
             
             n_q = len(data["survey_questions"])
             n_resp = len(parse_open_responses(data["open_responses"]))
