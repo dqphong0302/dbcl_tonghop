@@ -60,10 +60,12 @@ FONT_FAMILY_MONO = "Consolas"
 # ═══════════════════════════════════════════════════════════════
 
 class App(tk.Tk):
+    APP_VERSION = "v1"
+    
     def __init__(self):
         super().__init__()
         
-        self.title("📊 Tổng hợp Khảo sát Excel → Word")
+        self.title(f"📊 Tổng hợp Khảo sát Excel → Word ({self.APP_VERSION})")
         self.geometry("820x720")
         self.minsize(700, 600)
         self.configure(bg=COLORS["bg"])
@@ -425,6 +427,7 @@ class App(tk.Tk):
                 self._log(f"\n📄 {os.path.basename(filepath)} ({n_sheets} sheet)", "info")
                 
                 all_data = []
+                missing_f5_sheets = []  # Danh sách sheet thiếu ô F5
                 
                 for si in range(n_sheets):
                     try:
@@ -437,34 +440,50 @@ class App(tk.Tk):
                         self._log(f"   ⏭ Sheet {si} \"{sheet_names[si]}\": bỏ qua (không có dữ liệu)", "dim")
                         continue
                     
+                    # Kiểm tra ô F5 (Tổng số sinh viên) - BẮT BUỘC
+                    lop = data["meta"].get("lop_hoc", sheet_names[si])
+                    if data["meta"].get("tong_so_sv") is None:
+                        missing_f5_sheets.append(f"Sheet {si + 1} \"{lop}\"")
+                        self._log(f"   ❌ Sheet {si} \"{lop}\": Ô F5 (Tổng số SV) trống → KHÔNG tạo file!", "error")
+                        continue
+                    
                     all_data.append(data)
                     n_q = len(data["survey_questions"])
                     n_resp = len(parse_open_responses(data["open_responses"]))
-                    lop = data["meta"].get("lop_hoc", sheet_names[si])
-                    
-                    # Hiển thị cảnh báo (ví dụ: ô F5 trống)
-                    for warn_msg in data.get("warnings", []):
-                        self._log(f"   {warn_msg}", "warning")
                     
                     if n_sheets > 1:
                         out_path = os.path.join(out_dir, f"{basename}_sheet{si + 1}.docx")
                         create_word_report(data, out_path)
                         total_outputs += 1
-                        self._log(f"   ✅ Sheet {si} \"{lop}\": {n_q} câu → {os.path.basename(out_path)}", "success")
+                        self._log(f"   ✅ Sheet {si} \"{lop}\": {n_q} câu, {data['meta']['tong_so_sv']} SV → {os.path.basename(out_path)}", "success")
                     else:
                         out_path = os.path.join(out_dir, f"{basename}.docx")
                         create_word_report(data, out_path)
                         total_outputs += 1
-                        self._log(f"   ✅ {n_q} câu, {n_resp} ý kiến → {os.path.basename(out_path)}", "success")
+                        self._log(f"   ✅ {n_q} câu, {n_resp} ý kiến, {data['meta']['tong_so_sv']} SV → {os.path.basename(out_path)}", "success")
                 
-                # Tạo file tổng hợp
+                # Hiện popup cảnh báo nếu có sheet thiếu F5
+                if missing_f5_sheets:
+                    sheets_list = "\n".join(f"  • {s}" for s in missing_f5_sheets)
+                    popup_msg = (
+                        f"⚠️ File: {os.path.basename(filepath)}\n\n"
+                        f"Các sheet sau THIẾU ô F5 (Tổng số sinh viên),\n"
+                        f"KHÔNG thể tạo báo cáo:\n\n"
+                        f"{sheets_list}\n\n"
+                        f"Vui lòng điền tổng số sinh viên vào ô F5\n"
+                        f"trong file Excel rồi thử lại."
+                    )
+                    self.after(0, lambda msg=popup_msg: messagebox.showwarning(
+                        "Thiếu Tổng số Sinh viên (Ô F5)", msg))
+                
+                # Tạo file tổng hợp (chỉ từ các sheet có F5)
                 if len(all_data) > 1:
                     merged = merge_sheets_data(all_data)
                     if merged:
                         sum_path = os.path.join(out_dir, f"{basename}_TONG_HOP.docx")
                         create_word_report(merged, sum_path)
                         total_outputs += 1
-                        total_sv = merged["survey_questions"][0]["total"] if merged["survey_questions"] else 0
+                        total_sv = merged["meta"].get("tong_so_sv", 0)
                         self._log(f"   📊 TỔNG HỢP: {len(all_data)} lớp, {total_sv} SV → {os.path.basename(sum_path)}", "info")
                 
                 success_count += 1

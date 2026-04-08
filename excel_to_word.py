@@ -1053,6 +1053,7 @@ def process_file(input_path, output_dir=None):
         
         all_data = []
         outputs = []
+        missing_f5 = []
         
         for si in range(n_sheets):
             data = extract_data_from_excel(input_path, sheet_index=si)
@@ -1062,30 +1063,34 @@ def process_file(input_path, output_dir=None):
                 print(f"     ├─ Sheet {si} \"{sheet_names[si]}\": ⏭ bỏ qua (không có dữ liệu)")
                 continue
             
-            all_data.append(data)
+            # Kiểm tra ô F5 (Tổng số sinh viên) - BẮT BUỘC
+            lop = data["meta"].get("lop_hoc", sheet_names[si])
+            if data["meta"].get("tong_so_sv") is None:
+                missing_f5.append(f"Sheet {si + 1} \"{lop}\"")
+                print(f"     ├─ ❌ Sheet {si} \"{lop}\": Ô F5 (Tổng số SV) trống → KHÔNG tạo file!")
+                continue
             
-            # Hiển thị cảnh báo (ô F5 trống, v.v.)
-            for warn_msg in data.get("warnings", []):
-                print(f"     ├─ {warn_msg}")
+            all_data.append(data)
             
             n_q = len(data["survey_questions"])
             n_resp = len(parse_open_responses(data["open_responses"]))
-            lop = data["meta"].get("lop_hoc", sheet_names[si])
             
             if n_sheets > 1:
-                # Nhiều sheet -> tạo file riêng cho từng sheet
                 sheet_output = os.path.join(out_dir, f"{basename}_sheet{si + 1}.docx")
                 create_word_report(data, sheet_output)
                 outputs.append(sheet_output)
-                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {n_resp} ý kiến → {os.path.basename(sheet_output)}")
+                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {data['meta']['tong_so_sv']} SV → {os.path.basename(sheet_output)}")
             else:
-                # 1 sheet -> tạo file bình thường
                 sheet_output = os.path.join(out_dir, f"{basename}.docx")
                 create_word_report(data, sheet_output)
                 outputs.append(sheet_output)
-                print(f"     ├─ {n_q} câu hỏi, {n_resp} ý kiến mở")
+                print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta']['tong_so_sv']} SV")
         
-        # === TẠO FILE TỔNG HỢP nếu nhiều sheet ===
+        # Cảnh báo các sheet thiếu F5
+        if missing_f5:
+            print(f"     ├─ ⚠️  {len(missing_f5)} sheet thiếu ô F5: {', '.join(missing_f5)}")
+        
+        # === TẠO FILE TỔNG HỢP nếu nhiều sheet (chỉ từ sheet có F5) ===
         if len(all_data) > 1:
             merged = merge_sheets_data(all_data)
             if merged:
@@ -1093,7 +1098,7 @@ def process_file(input_path, output_dir=None):
                 create_word_report(merged, summary_output)
                 outputs.append(summary_output)
                 
-                total_sv = merged["survey_questions"][0]["total"] if merged["survey_questions"] else 0
+                total_sv = merged["meta"].get("tong_so_sv", 0)
                 print(f"     ├─ 📊 TỔNG HỢP: {len(all_data)} lớp, {total_sv} SV → {os.path.basename(summary_output)}")
         
         if outputs:
