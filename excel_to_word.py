@@ -83,25 +83,24 @@ def extract_data_from_excel(filepath, sheet_index=0):
         "warnings": [],           # Danh sách cảnh báo
     }
     
-    # --- Trích xuất tổng số sinh viên từ ô F5 (row 4, col 5, 0-indexed) ---
+    # --- Trích xuất tổng số sinh viên từ ô F5 (fallback) ---
     tong_so_sv = None
     if sheet.nrows > 4 and sheet.ncols > 5:
         f5_val = sheet.cell(4, 5).value  # F5 = row index 4, col index 5
         if f5_val is not None and str(f5_val).strip() != "":
             try:
                 tong_so_sv = int(float(f5_val))
-                data["meta"]["tong_so_sv"] = tong_so_sv
             except (ValueError, TypeError):
                 data["warnings"].append(
                     f"⚠️ Ô F5 có giá trị '{f5_val}' nhưng không phải số. "
-                    f"Không thể tính tỷ lệ khảo sát."
                 )
     
-    if tong_so_sv is None:
-        data["warnings"].append(
-            "⚠️ Ô F5 (Tổng số sinh viên) đang trống! "
-            "Không thể tính tỷ lệ phiếu khảo sát trên tổng số sinh viên."
-        )
+    # --- Lấy số SV KHÔNG tham gia khảo sát từ tên file ---
+    basename = os.path.splitext(os.path.basename(filepath))[0]
+    match = re.search(r'\s+(\d+)$', basename)
+    sv_khong_khao_sat = None
+    if match:
+        sv_khong_khao_sat = int(match.group(1))
     
     # --- Trích xuất metadata từ header ---
     for r in range(min(10, sheet.nrows)):
@@ -281,6 +280,18 @@ def extract_data_from_excel(filepath, sheet_index=0):
             elif "ý kiến đóng góp" in col0.lower() or "ý kiến" in col0.lower() and "đóng góp" in col0.lower():
                 raw = str(sheet.cell(r, 2).value).strip().rstrip(" ") if sheet.ncols > 2 else ""
                 data["open_responses"] = raw
+    
+    # --- Tính toán Tổng số sinh viên (Dựa vào tổng phiếu + SV không tham gia) ---
+    total_phieu = 0
+    if data["survey_questions"]:
+        total_phieu = data["survey_questions"][0].get("total", 0)
+        
+    if sv_khong_khao_sat is not None:
+        data["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
+    elif tong_so_sv is not None:
+        data["meta"]["tong_so_sv"] = tong_so_sv
+    else:
+        data["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống!")
     
     # --- Trích xuất thông tin cuối file (ngày, người ký) ---
     for r in range(max(0, sheet.nrows - 10), sheet.nrows):
@@ -1042,6 +1053,11 @@ def process_file(input_path, output_dir=None):
         return None
     
     basename = os.path.splitext(os.path.basename(input_path))[0]
+    
+    # Loại bỏ số SV không tham gia ở cuối tên file (nếu có)
+    clean_basename = re.sub(r'\s+\d+$', '', basename)
+    final_basename = f"{clean_basename} (gộp)"
+    
     out_dir = output_dir or os.path.dirname(input_path)
     os.makedirs(out_dir, exist_ok=True)
     
@@ -1076,15 +1092,15 @@ def process_file(input_path, output_dir=None):
             n_resp = len(parse_open_responses(data["open_responses"]))
             
             if n_sheets > 1:
-                sheet_output = os.path.join(out_dir, f"{basename}_sheet{si + 1}.docx")
+                sheet_output = os.path.join(out_dir, f"{final_basename}_sheet{si + 1}.docx")
                 create_word_report(data, sheet_output)
                 outputs.append(sheet_output)
-                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {data['meta']['tong_so_sv']} SV → {os.path.basename(sheet_output)}")
+                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {data['meta'].get('tong_so_sv', 0)} SV → {os.path.basename(sheet_output)}")
             else:
-                sheet_output = os.path.join(out_dir, f"{basename}.docx")
+                sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
                 create_word_report(data, sheet_output)
                 outputs.append(sheet_output)
-                print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta']['tong_so_sv']} SV")
+                print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta'].get('tong_so_sv', 0)} SV")
         
         # Cảnh báo các sheet thiếu F5
         if missing_f5:
@@ -1094,7 +1110,7 @@ def process_file(input_path, output_dir=None):
         if len(all_data) > 1:
             merged = merge_sheets_data(all_data)
             if merged:
-                summary_output = os.path.join(out_dir, f"{basename}_TONG_HOP.docx")
+                summary_output = os.path.join(out_dir, f"{final_basename}_TONG_HOP.docx")
                 create_word_report(merged, summary_output)
                 outputs.append(summary_output)
                 

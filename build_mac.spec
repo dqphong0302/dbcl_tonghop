@@ -9,6 +9,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('excel_to_word.py', '.'),
+        ('merge_feedbacks.py', '.'),
     ],
     hiddenimports=[
         'xlrd', 'docx', 'docx.opc', 'docx.opc.constants',
