@@ -466,7 +466,7 @@ class App(tk.Tk):
         OutputDirRow(card2, self._outdir2).pack(fill="x")
         self._outdir2.trace_add("write", lambda *_: self._save_settings())
 
-        act = tk.Frame(tab, bg=C["bg"], padx=20, pady=(4, 8))
+        act = tk.Frame(tab, bg=C["bg"], padx=20, pady=4)
         act.pack(fill="x")
         self._btn2 = ttk.Button(act, text="💬  Gộp Feedbacks",
                                 style="Green.TButton", command=self._start_tool2)
