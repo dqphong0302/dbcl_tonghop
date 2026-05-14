@@ -13,16 +13,36 @@ def extract_feedbacks(filepath):
     try:
         wb = xlrd.open_workbook(filepath)
         for sheet in wb.sheets():
-            if sheet.ncols > 36:  # Cột AK là index 36
-                for r in range(sheet.nrows):
-                    # Bỏ qua dòng tiêu đề nếu cần, thường dòng đầu
-                    if r == 0:
-                        continue
-                    val = str(sheet.cell(r, 36).value).strip()
-                    if val:
-                        # Tách các câu trả lời và làm sạch bằng hàm có sẵn
-                        cleaned_responses = parse_open_responses(val)
-                        feedbacks.extend(cleaned_responses)
+            if sheet.nrows == 0:
+                continue
+            
+            # Tìm cột chứa feedback bằng cách duyệt vài dòng đầu
+            feedback_col_idx = -1
+            start_row = 1
+            
+            for r in range(min(10, sheet.nrows)):
+                row_vals = sheet.row_values(r)
+                for c, val in enumerate(row_vals):
+                    val_str = str(val).lower()
+                    if "ý kiến đóng góp" in val_str or "feedback" in val_str:
+                        feedback_col_idx = c
+                        start_row = r + 1
+                        break
+                if feedback_col_idx != -1:
+                    break
+                    
+            # Nếu không tìm thấy bằng keyword, lấy cột cuối cùng
+            if feedback_col_idx == -1:
+                feedback_col_idx = sheet.ncols - 1
+                start_row = 5 # Mặc định dòng bắt đầu dữ liệu của file form
+                
+            for r in range(start_row, sheet.nrows):
+                val = str(sheet.cell(r, feedback_col_idx).value).strip()
+                # Loại bỏ các câu trả lời rỗng hoặc không có ý nghĩa
+                if val and val.lower() not in ["không", "không có", "khong", "none", "n/a", "chưa có", "không có ý kiến", "không có ý kiến gì"]:
+                    # Tách các câu trả lời và làm sạch bằng hàm có sẵn
+                    cleaned_responses = parse_open_responses(val)
+                    feedbacks.extend(cleaned_responses)
     except Exception as e:
         print(f"  ❌ Lỗi đọc file {filepath}: {e}")
     return feedbacks
