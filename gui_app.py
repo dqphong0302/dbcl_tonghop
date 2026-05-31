@@ -426,7 +426,7 @@ class App(tk.Tk):
         self._tab3 = self._build_tab3()
         self._nb.add(self._tab1, text="  📄 Tổng hợp báo cáo  ")
         self._nb.add(self._tab2, text="  💬 Gộp Feedbacks  ")
-        self._nb.add(self._tab4, text="  📈 Phân tích & Xu hướng  ")
+        # self._nb.add(self._tab4, text="  📈 Phân tích & Xu hướng  ") # Đã ẩn tính năng phân tích & xu hướng theo yêu cầu
         self._nb.add(self._tab3, text="  ⚙️ Cấu hình  ")
 
         # ── STATUS BAR ──
@@ -1048,7 +1048,7 @@ class App(tk.Tk):
                     analysis_source = all_data[0]
 
                 # Báo cáo phân tích kèm biểu đồ (Round 2 - số liệu hiệu quả SKKN)
-                if analysis_source is not None:
+                if False:  # Đã lược bỏ tính năng phân tích định lượng nâng cao theo yêu cầu
                     try:
                         a = analytics.analyze_survey(analysis_source)
                         ana_path = os.path.join(out_dir, f"{basename}_PHAN_TICH.docx")
