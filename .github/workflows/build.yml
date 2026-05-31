@@ -17,7 +17,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install xlrd==2.0.1 python-docx==1.1.2 pyinstaller
+        run: pip install -r requirements.txt
 
       - name: Build EXE
         run: pyinstaller build.spec --clean --noconfirm
@@ -40,7 +40,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install xlrd==2.0.1 python-docx==1.1.2 pyinstaller
+        run: pip install -r requirements.txt
 
       - name: Build macOS App
         run: pyinstaller build_mac.spec --clean --noconfirm
@@ -48,7 +48,7 @@ jobs:
       - name: Create ZIP from .app
         run: |
           cd dist
-          zip -r TongHopKhaoSat-Mac.zip TongHopKhaoSat.app
+          ditto -c -k --sequesterRsrc --keepParent TongHopKhaoSat.app TongHopKhaoSat-Mac.zip
 
       - name: Upload macOS App
         uses: actions/upload-artifact@v4

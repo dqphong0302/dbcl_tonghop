@@ -24,7 +24,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
-
+import json
+from pathlib import Path
+from data_utils import open_workbook as _open_workbook
 
 # ═══════════════════════════════════════════════════════════════════
 # CẤU HÌNH - Điều chỉnh theo nhu cầu
@@ -42,6 +44,27 @@ CONFIG = {
     ],
     "font_name": "Times New Roman",
     "font_size": 12,                             # pt
+    "margin_top": 2.0,                           # cm
+    "margin_bottom": 2.0,                        # cm
+    "margin_left": 2.5,                          # cm
+    "margin_right": 2.0,                         # cm
+    "table_header_bg": "D9E2F3",                 # hex
+    "open_response_lines": 4,                    # số dòng trống
+
+    # Cấu hình keywords của feedback
+    "feedback_search_keywords": ["ý kiến đóng góp", "feedback"],
+    "feedback_skip_keywords": ["không", "không có", "khong", "none", "n/a", "chưa có", "không có ý kiến", "không có ý kiến gì"],
+    "feedback_skip_patterns": [
+        r'^không\s*(ạ|có|cóa)?\.?$',
+        r'^ko\.?$',
+        r'^khong\.?$',
+        r'^dạ\s*không\s*(ạ|có)?\.?$',
+        r'^không\s*có\s*(góp\s*ý|ý\s*kiến)?\.?$',
+        r'^dạ\s*không\s*có\.?$',
+        r'^không\s*có\s*ý\s*kiến\.?$',
+        r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
+    ],
+
     "scale_labels": [                            # Nhãn thang đo Likert 5 mức
         "1. Hoàn toàn không đồng ý",
         "2. Không đồng ý",
@@ -63,6 +86,95 @@ CONFIG = {
     ],
 }
 
+SETTINGS_FILE = Path.home() / ".dbcl_tonghop_settings.json"
+
+def load_settings_into_config():
+    global CONFIG
+    CONFIG["university_name"] = "ĐẠI HỌC Y DƯỢC\nTHÀNH PHỐ HỒ CHÍ MINH"
+    CONFIG["faculty_name"] = "KHOA KHCB"
+    CONFIG["country_header"] = "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
+    CONFIG["country_slogan"] = "Độc lập – Tự do – Hạnh phúc"
+    CONFIG["report_title_lines"] = [
+        "BÁO CÁO TỔNG HỢP KẾT QUẢ",
+        "KHẢO SÁT SINH VIÊN SAU KHI KẾT THÚC HỌC PHẦN CƠ SỞ",
+        "& ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN",
+    ]
+    CONFIG["font_name"] = "Times New Roman"
+    CONFIG["font_size"] = 12
+    CONFIG["margin_top"] = 2.0
+    CONFIG["margin_bottom"] = 2.0
+    CONFIG["margin_left"] = 2.5
+    CONFIG["margin_right"] = 2.0
+    CONFIG["table_header_bg"] = "D9E2F3"
+    CONFIG["open_response_lines"] = 4
+    CONFIG["feedback_search_keywords"] = ["ý kiến đóng góp", "feedback"]
+    CONFIG["feedback_skip_keywords"] = ["không", "không có", "khong", "none", "n/a", "chưa có", "không có ý kiến", "không có ý kiến gì"]
+    CONFIG["feedback_skip_patterns"] = [
+        r'^không\s*(ạ|có|cóa)?\.?$',
+        r'^ko\.?$',
+        r'^khong\.?$',
+        r'^dạ\s*không\s*(ạ|có)?\.?$',
+        r'^không\s*có\s*(góp\s*ý|ý\s*kiến)?\.?$',
+        r'^dạ\s*không\s*có\.?$',
+        r'^không\s*có\s*ý\s*kiến\.?$',
+        r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
+    ]
+    
+    try:
+        if SETTINGS_FILE.exists():
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if "word_format" in data:
+                wf = data["word_format"]
+                if "university_name" in wf:
+                    CONFIG["university_name"] = wf["university_name"]
+                if "faculty_name" in wf:
+                    CONFIG["faculty_name"] = wf["faculty_name"]
+                if "country_header" in wf:
+                    CONFIG["country_header"] = wf["country_header"]
+                if "country_slogan" in wf:
+                    CONFIG["country_slogan"] = wf["country_slogan"]
+                if "report_title" in wf:
+                    CONFIG["report_title_lines"] = [line.strip() for line in wf["report_title"].split("\n") if line.strip()]
+                if "font_name" in wf:
+                    CONFIG["font_name"] = wf["font_name"]
+                if "font_size" in wf:
+                    CONFIG["font_size"] = int(wf["font_size"])
+                if "margin_top" in wf:
+                    CONFIG["margin_top"] = float(wf["margin_top"])
+                if "margin_bottom" in wf:
+                    CONFIG["margin_bottom"] = float(wf["margin_bottom"])
+                if "margin_left" in wf:
+                    CONFIG["margin_left"] = float(wf["margin_left"])
+                if "margin_right" in wf:
+                    CONFIG["margin_right"] = float(wf["margin_right"])
+                if "table_header_bg" in wf:
+                    CONFIG["table_header_bg"] = wf["table_header_bg"]
+                if "open_response_lines" in wf:
+                    CONFIG["open_response_lines"] = int(wf["open_response_lines"])
+
+            if "feedback_config" in data:
+                fc = data["feedback_config"]
+                if "search_keywords" in fc:
+                    if isinstance(fc["search_keywords"], list):
+                        CONFIG["feedback_search_keywords"] = fc["search_keywords"]
+                    else:
+                        CONFIG["feedback_search_keywords"] = [k.strip() for k in fc["search_keywords"].split(",") if k.strip()]
+                if "skip_keywords" in fc:
+                    if isinstance(fc["skip_keywords"], list):
+                        CONFIG["feedback_skip_keywords"] = fc["skip_keywords"]
+                    else:
+                        CONFIG["feedback_skip_keywords"] = [k.strip() for k in fc["skip_keywords"].split(",") if k.strip()]
+                if "skip_patterns" in fc:
+                    if isinstance(fc["skip_patterns"], list):
+                        CONFIG["feedback_skip_patterns"] = fc["skip_patterns"]
+                    else:
+                        CONFIG["feedback_skip_patterns"] = [p.strip() for p in fc["skip_patterns"].split("\n") if p.strip()]
+    except Exception as e:
+        print(f"Error loading settings into CONFIG: {e}")
+
+# Tải cấu hình tự động khi import
+load_settings_into_config()
+
 
 # ═══════════════════════════════════════════════════════════════════
 # TRÍCH XUẤT DỮ LIỆU TỪ EXCEL
@@ -70,7 +182,7 @@ CONFIG = {
 
 def extract_data_from_excel(filepath, sheet_index=0):
     """Đọc và trích xuất toàn bộ dữ liệu từ file Excel khảo sát."""
-    wb = xlrd.open_workbook(filepath)
+    wb = _open_workbook(filepath)
     sheet = wb.sheet_by_index(sheet_index)
     
     data = {
@@ -321,7 +433,7 @@ def parse_open_responses(raw_text):
         return []
     
     # Các pattern chỉ "không có ý kiến"
-    skip_patterns = [
+    default_patterns = [
         r'^không\s*(ạ|có|cóa)?\.?$',
         r'^ko\.?$',
         r'^khong\.?$',
@@ -331,6 +443,7 @@ def parse_open_responses(raw_text):
         r'^không\s*có\s*ý\s*kiến\.?$',
         r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
     ]
+    skip_patterns = CONFIG.get("feedback_skip_patterns", default_patterns)
     
     # Thử tách bằng nhiều cách
     # Cách 1: Tách bằng các cụm keyword phân cách 
@@ -462,10 +575,10 @@ def create_word_report(data, output_path):
     section = doc.sections[0]
     section.page_width = Cm(21)     # A4
     section.page_height = Cm(29.7)
-    section.left_margin = Cm(2.5)
-    section.right_margin = Cm(2)
-    section.top_margin = Cm(2)
-    section.bottom_margin = Cm(2)
+    section.left_margin = Cm(CONFIG.get("margin_left", 2.5))
+    section.right_margin = Cm(CONFIG.get("margin_right", 2.0))
+    section.top_margin = Cm(CONFIG.get("margin_top", 2.0))
+    section.bottom_margin = Cm(CONFIG.get("margin_bottom", 2.0))
     
     # --- Set default font + giãn dòng ---
     style = doc.styles['Normal']
@@ -648,7 +761,7 @@ def create_word_report(data, output_path):
         for i, h in enumerate(headers):
             format_cell_text(bg_table.cell(0, i), h, bold=True, font_size=11,
                             alignment=WD_ALIGN_PARAGRAPH.CENTER)
-            set_cell_shading(bg_table.cell(0, i), "D9E2F3")
+            set_cell_shading(bg_table.cell(0, i), CONFIG.get("table_header_bg", "D9E2F3"))
         
         # Mapping thông tin nền
         bg_mapping = {
@@ -784,7 +897,7 @@ def create_word_report(data, output_path):
         for i, h in enumerate(header_texts):
             format_cell_text(header_row.cells[i], h, bold=True, font_size=10,
                             alignment=WD_ALIGN_PARAGRAPH.CENTER)
-            set_cell_shading(header_row.cells[i], "D9E2F3")
+            set_cell_shading(header_row.cells[i], CONFIG.get("table_header_bg", "D9E2F3"))
         
         # Fill data
         current_row = 1
@@ -848,7 +961,7 @@ def create_word_report(data, output_path):
                             bold=True, font_size=12, space_after=6)
     
     # Để trống - thêm vài dòng trắng
-    for _ in range(4):
+    for _ in range(CONFIG.get("open_response_lines", 4)):
         doc.add_paragraph()
     
     
@@ -879,7 +992,7 @@ def create_word_report(data, output_path):
     for i, h in enumerate(improve_headers):
         format_cell_text(improve_table.cell(0, i), h, bold=True, font_size=11,
                         alignment=WD_ALIGN_PARAGRAPH.CENTER)
-        set_cell_shading(improve_table.cell(0, i), "D9E2F3")
+        set_cell_shading(improve_table.cell(0, i), CONFIG.get("table_header_bg", "D9E2F3"))
     
     # Để trống bảng cải tiến cho người dùng tự điền
     
@@ -1042,7 +1155,7 @@ def merge_sheets_data(all_data_list):
 
 def get_sheet_count(filepath):
     """Đếm số sheet trong file Excel."""
-    wb = xlrd.open_workbook(filepath)
+    wb = _open_workbook(filepath)
     return wb.nsheets, wb.sheet_names()
 
 

@@ -1,7 +1,12 @@
 build/
 dist/
+dist_windows/
 __pycache__/
 *.pyc
 *.spec.bak
 .DS_Store
 output/
+*_BAK*.docx
+~$*.docx
+*.log
+logs/

@@ -3,47 +3,49 @@
 import sys
 import os
 import argparse
-import xlrd
 from docx import Document
 from docx.shared import Pt, Cm
 from excel_to_word import parse_open_responses, CONFIG
+from data_utils import open_workbook, detect_feedback_column
+from app_logging import get_logger
+import feedback_classifier as fc
+
+log = get_logger()
 
 def extract_feedbacks(filepath):
+    """Trích xuất ý kiến mở từ file feedback (.xls/.xlsx).
+
+    Dò cột feedback TỰ ĐỘNG theo tiêu đề (không hard-code index 36),
+    có fallback an toàn về cột cuối. Ghi log số ý kiến tìm được.
+    """
     feedbacks = []
     try:
-        wb = xlrd.open_workbook(filepath)
-        for sheet in wb.sheets():
+        wb = open_workbook(filepath)
+        search_keywords = CONFIG.get("feedback_search_keywords", ["ý kiến đóng góp", "feedback"])
+        skip_keywords = CONFIG.get("feedback_skip_keywords",
+                                   ["không", "không có", "khong", "none", "n/a",
+                                    "chưa có", "không có ý kiến", "không có ý kiến gì"])
+        skip_keywords_lower = [k.lower() for k in skip_keywords]
+
+        for sheet in wb.sheets:
             if sheet.nrows == 0:
                 continue
-            
-            # Tìm cột chứa feedback bằng cách duyệt vài dòng đầu
-            feedback_col_idx = -1
-            start_row = 1
-            
-            for r in range(min(10, sheet.nrows)):
-                row_vals = sheet.row_values(r)
-                for c, val in enumerate(row_vals):
-                    val_str = str(val).lower()
-                    if "ý kiến đóng góp" in val_str or "feedback" in val_str:
-                        feedback_col_idx = c
-                        start_row = r + 1
-                        break
-                if feedback_col_idx != -1:
-                    break
-                    
-            # Nếu không tìm thấy bằng keyword, lấy cột cuối cùng
-            if feedback_col_idx == -1:
-                feedback_col_idx = sheet.ncols - 1
-                start_row = 5 # Mặc định dòng bắt đầu dữ liệu của file form
-                
+
+            feedback_col_idx, start_row = detect_feedback_column(sheet, search_keywords)
+            log.info("Đọc feedback '%s' [%s]: cột %d, từ dòng %d",
+                     os.path.basename(filepath), sheet.name, feedback_col_idx, start_row + 1)
+
+            sheet_count = 0
             for r in range(start_row, sheet.nrows):
-                val = str(sheet.cell(r, feedback_col_idx).value).strip()
+                val = str(sheet.cell_value(r, feedback_col_idx)).strip()
                 # Loại bỏ các câu trả lời rỗng hoặc không có ý nghĩa
-                if val and val.lower() not in ["không", "không có", "khong", "none", "n/a", "chưa có", "không có ý kiến", "không có ý kiến gì"]:
-                    # Tách các câu trả lời và làm sạch bằng hàm có sẵn
+                if val and val.lower() not in skip_keywords_lower:
                     cleaned_responses = parse_open_responses(val)
                     feedbacks.extend(cleaned_responses)
+                    sheet_count += len(cleaned_responses)
+            log.info("  -> %d ý kiến hợp lệ từ sheet '%s'", sheet_count, sheet.name)
     except Exception as e:
+        log.error("Lỗi đọc file %s: %s", filepath, e)
         print(f"  ❌ Lỗi đọc file {filepath}: {e}")
     return feedbacks
 
@@ -95,15 +97,46 @@ def merge_feedbacks(input_files, output_dir=None):
     
     heading = doc.add_paragraph("TỔNG HỢP FEEDBACKS", style='Heading 1')
     heading.alignment = 1 # Center
-    
+
     doc.add_paragraph(f"Tổng số ý kiến đóng góp: {len(unique_feedbacks)}")
-    doc.add_paragraph()
-    
-    for i, fb in enumerate(unique_feedbacks, 1):
-        p = doc.add_paragraph(f"{i}. {fb}")
-        p.paragraph_format.space_after = Pt(6)
-        
+
+    # ── PHÂN LOẠI Ý KIẾN THEO CHỦ ĐỀ & SẮC THÁI (offline) ──
+    try:
+        result = fc.classify_feedbacks(unique_feedbacks)
+        log.info("Phân loại %d ý kiến theo chủ đề & sắc thái", result.total)
+
+        doc.add_paragraph()
+        h2 = doc.add_paragraph("PHÂN LOẠI THEO CHỦ ĐỀ", style='Heading 2')
+        for topic, pct in result.topic_percentages().items():
+            cnt = result.topic_counts[topic]
+            doc.add_paragraph(f"• {topic}: {cnt} ý kiến ({pct}%)")
+
+        doc.add_paragraph()
+        h3 = doc.add_paragraph("PHÂN LOẠI THEO SẮC THÁI", style='Heading 2')
+        for s, pct in result.sentiment_percentages().items():
+            cnt = result.sentiment_counts[s]
+            doc.add_paragraph(f"• {s.capitalize()}: {cnt} ý kiến ({pct}%)")
+
+        # Liệt kê ý kiến gom theo chủ đề
+        doc.add_paragraph()
+        doc.add_paragraph("CHI TIẾT Ý KIẾN THEO CHỦ ĐỀ", style='Heading 2')
+        for topic, items in result.by_topic().items():
+            doc.add_paragraph()
+            ph = doc.add_paragraph(f"{topic} ({len(items)} ý kiến)")
+            ph.runs[0].bold = True
+            for i, it in enumerate(items, 1):
+                p = doc.add_paragraph(f"{i}. [{it.sentiment}] {it.text}")
+                p.paragraph_format.space_after = Pt(4)
+    except Exception as e:
+        log.warning("Không phân loại được ý kiến: %s", e)
+        # Fallback: liệt kê đơn giản như cũ
+        doc.add_paragraph()
+        for i, fb in enumerate(unique_feedbacks, 1):
+            p = doc.add_paragraph(f"{i}. {fb}")
+            p.paragraph_format.space_after = Pt(6)
+
     doc.save(output_path)
+    log.info("Đã lưu %d feedbacks vào %s", len(unique_feedbacks), os.path.basename(output_path))
     print(f"  ✅ Đã lưu {len(unique_feedbacks)} feedbacks vào {os.path.basename(output_path)}")
     return output_path
 
