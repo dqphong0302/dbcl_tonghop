@@ -9,6 +9,7 @@ Xử lý chạy trên luồng nền để không khóa giao diện.
 
 import sys
 import os
+import re
 import threading
 import glob
 import json
