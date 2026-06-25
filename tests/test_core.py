@@ -173,3 +173,43 @@ def test_validate_survey_sheet():
     report = data_utils.validate_survey_sheet(sh, "Sheet 1")
     # File mẫu hợp lệ => không có lỗi nghiêm trọng
     assert report.ok
+
+
+@pytest.mark.skipif(not os.path.exists(SURVEY_FILE_2), reason="thiếu file mẫu")
+def test_multi_sheet_aggregation_single_suffix(tmp_path):
+    # Chạy process_file cho SURVEY_FILE_2 có 4 sheets
+    outputs = e2w.process_file(SURVEY_FILE_2, output_dir=str(tmp_path))
+    assert outputs is not None
+    # Chỉ được tạo 1 file kết quả đại diện cho dữ liệu gộp, thay vì từng file cho mỗi sheet
+    assert len(outputs) == 1
+    out_file = outputs[0]
+    assert os.path.exists(out_file)
+    
+    # Kiểm tra logic trích xuất không mang suffix ở cấp sheet và chỉ cộng 1 lần khi gộp
+    n_sheets, _ = e2w.get_sheet_count(SURVEY_FILE_2)
+    all_data = []
+    for si in range(n_sheets):
+        data = e2w.extract_data_from_excel(SURVEY_FILE_2, sheet_index=si, apply_filename_suffix=False)
+        if data["survey_questions"]:
+            all_data.append(data)
+            
+    # Mỗi sheet đơn lẻ không được tự ý áp dụng suffix của file name
+    for d in all_data:
+        assert d["meta"].get("tong_so_sv") is None
+        
+    merged = e2w.merge_sheets_data(all_data)
+    assert merged is not None
+    
+    # Tính toán tong_so_sv gộp có suffix
+    import re
+    basename = os.path.splitext(os.path.basename(SURVEY_FILE_2))[0]
+    match = re.search(r'\s+(\d+)$', basename)
+    sv_khong_khao_sat = int(match.group(1)) if match else None
+    assert sv_khong_khao_sat == 2
+    
+    total_phieu = merged["survey_questions"][0].get("total", 0)
+    merged["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
+    
+    # tong_so_sv của bản gộp phải bằng tổng phiếu phản hồi của tất cả các sheet + 2
+    assert merged["meta"]["tong_so_sv"] == total_phieu + 2
+

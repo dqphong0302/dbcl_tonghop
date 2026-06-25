@@ -180,7 +180,7 @@ load_settings_into_config()
 # TRÍCH XUẤT DỮ LIỆU TỪ EXCEL
 # ═══════════════════════════════════════════════════════════════════
 
-def extract_data_from_excel(filepath, sheet_index=0):
+def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True):
     """Đọc và trích xuất toàn bộ dữ liệu từ file Excel khảo sát."""
     wb = _open_workbook(filepath)
     sheet = wb.sheet_by_index(sheet_index)
@@ -211,7 +211,7 @@ def extract_data_from_excel(filepath, sheet_index=0):
     basename = os.path.splitext(os.path.basename(filepath))[0]
     match = re.search(r'\s+(\d+)$', basename)
     sv_khong_khao_sat = None
-    if match:
+    if apply_filename_suffix and match:
         sv_khong_khao_sat = int(match.group(1))
     
     # --- Trích xuất metadata từ header ---
@@ -403,7 +403,9 @@ def extract_data_from_excel(filepath, sheet_index=0):
     elif tong_so_sv is not None:
         data["meta"]["tong_so_sv"] = tong_so_sv
     else:
-        data["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống!")
+        data["meta"]["tong_so_sv"] = None
+        if apply_filename_suffix:
+            data["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống!")
     
     # --- Trích xuất thông tin cuối file (ngày, người ký) ---
     for r in range(max(0, sheet.nrows - 10), sheet.nrows):
@@ -1160,7 +1162,7 @@ def get_sheet_count(filepath):
 
 
 def process_file(input_path, output_dir=None):
-    """Xử lý 1 file Excel -> Word. Nếu nhiều sheet thì tạo thêm file tổng."""
+    """Xử lý 1 file Excel -> Word. Nếu nhiều sheet thì tổng hợp thành 1 sheet trước rồi mới thực hiện."""
     if not os.path.exists(input_path):
         print(f"  ❌ File không tồn tại: {input_path}")
         return None
@@ -1181,60 +1183,77 @@ def process_file(input_path, output_dir=None):
         print(f"     ├─ Số sheet: {n_sheets}")
         
         all_data = []
-        outputs = []
-        missing_f5 = []
-        
         for si in range(n_sheets):
-            data = extract_data_from_excel(input_path, sheet_index=si)
+            data = extract_data_from_excel(input_path, sheet_index=si, apply_filename_suffix=False)
+            if data["survey_questions"]:
+                all_data.append(data)
+            else:
+                print(f"     ├─ Sheet {si + 1} \"{sheet_names[si]}\": ⏭ bỏ qua (không có dữ liệu)")
+
+        if not all_data:
+            print(f"     └─ ⚠️ Không có sheet nào chứa dữ liệu khảo sát")
+            return None
+
+        outputs = []
+        
+        # Lấy số SV KHÔNG tham gia khảo sát từ tên file
+        match = re.search(r'\s+(\d+)$', basename)
+        sv_khong_khao_sat = int(match.group(1)) if match else None
+
+        if len(all_data) == 1:
+            data = all_data[0]
+            total_phieu = data["survey_questions"][0].get("total", 0) if data["survey_questions"] else 0
+            if sv_khong_khao_sat is not None:
+                data["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
             
-            # Bỏ qua sheet rỗng (không có câu hỏi khảo sát)
-            if not data["survey_questions"]:
-                print(f"     ├─ Sheet {si} \"{sheet_names[si]}\": ⏭ bỏ qua (không có dữ liệu)")
-                continue
-            
-            # Kiểm tra ô F5 (Tổng số sinh viên) - BẮT BUỘC
-            lop = data["meta"].get("lop_hoc", sheet_names[si])
             if data["meta"].get("tong_so_sv") is None:
-                missing_f5.append(f"Sheet {si + 1} \"{lop}\"")
-                print(f"     ├─ ❌ Sheet {si} \"{lop}\": Ô F5 (Tổng số SV) trống → KHÔNG tạo file!")
-                continue
-            
-            all_data.append(data)
-            
+                print(f"     ├─ ❌ Không xác định được Tổng số SV (ô F5 và tên file đều trống)!")
+                return None
+
+            sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
+            create_word_report(data, sheet_output)
+            outputs.append(sheet_output)
             n_q = len(data["survey_questions"])
             n_resp = len(parse_open_responses(data["open_responses"]))
-            
-            if n_sheets > 1:
-                sheet_output = os.path.join(out_dir, f"{final_basename}_sheet{si + 1}.docx")
-                create_word_report(data, sheet_output)
-                outputs.append(sheet_output)
-                print(f"     ├─ Sheet {si} \"{lop}\": {n_q} câu, {data['meta'].get('tong_so_sv', 0)} SV → {os.path.basename(sheet_output)}")
-            else:
-                sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
-                create_word_report(data, sheet_output)
-                outputs.append(sheet_output)
-                print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta'].get('tong_so_sv', 0)} SV")
-        
-        # Cảnh báo các sheet thiếu F5
-        if missing_f5:
-            print(f"     ├─ ⚠️  {len(missing_f5)} sheet thiếu ô F5: {', '.join(missing_f5)}")
-        
-        # === TẠO FILE TỔNG HỢP nếu nhiều sheet (chỉ từ sheet có F5) ===
-        if len(all_data) > 1:
+            print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta'].get('tong_so_sv', 0)} SV")
+        else:
+            # Gộp các sheet thành 1 sheet trước
             merged = merge_sheets_data(all_data)
             if merged:
-                summary_output = os.path.join(out_dir, f"{final_basename}_TONG_HOP.docx")
-                create_word_report(merged, summary_output)
-                outputs.append(summary_output)
+                # Tính tổng số sinh viên của bản gộp
+                total_tong_sv = 0
+                has_any_tong_sv = False
+                for d in all_data:
+                    sv = d["meta"].get("tong_so_sv", None) # Đây là các F5 do apply_filename_suffix=False
+                    if sv is not None:
+                        total_tong_sv += sv
+                        has_any_tong_sv = True
+
+                total_phieu = merged["survey_questions"][0].get("total", 0) if merged["survey_questions"] else 0
+                if sv_khong_khao_sat is not None:
+                    merged["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
+                elif has_any_tong_sv:
+                    merged["meta"]["tong_so_sv"] = total_tong_sv
+                else:
+                    merged["meta"]["tong_so_sv"] = None
+                    merged["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống ở tất cả các sheet!")
+
+                if merged["meta"].get("tong_so_sv") is None:
+                    print(f"     ├─ ❌ Không xác định được Tổng số SV cho file gộp (ô F5 và tên file đều trống)!")
+                    return None
+
+                sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
+                create_word_report(merged, sheet_output)
+                outputs.append(sheet_output)
                 
+                n_q = len(merged["survey_questions"])
                 total_sv = merged["meta"].get("tong_so_sv", 0)
-                print(f"     ├─ 📊 TỔNG HỢP: {len(all_data)} lớp, {total_sv} SV → {os.path.basename(summary_output)}")
+                print(f"     ├─ 📊 ĐÃ GỘP: {len(all_data)} sheets, {n_q} câu, {total_sv} SV")
         
         if outputs:
             print(f"     └─ ✅ Tạo {len(outputs)} file thành công")
             return outputs
         else:
-            print(f"     └─ ⚠️ Không có sheet nào chứa dữ liệu khảo sát")
             return None
     
     except Exception as e:
