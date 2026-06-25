@@ -3,6 +3,10 @@
 PyInstaller spec file - Đóng gói thành .exe cho Windows
 Chạy: pyinstaller build.spec
 """
+import os
+import docx
+
+docx_templates = os.path.join(os.path.dirname(docx.__file__), 'templates')
 
 block_cipher = None
 
@@ -17,6 +21,7 @@ a = Analysis(
         ('app_logging.py', '.'),
         ('benchmark.py', '.'),
         ('feedback_classifier.py', '.'),
+        (docx_templates, 'docx/templates'),
     ],
     hiddenimports=[
         'xlrd',

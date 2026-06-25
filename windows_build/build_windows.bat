@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 >nul
+cd /d "%~dp0\.."
 title Đóng gói Tổng hợp Khảo sát → EXE
 
 echo ══════════════════════════════════════════════════

@@ -16,19 +16,35 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import traceback
 
-from excel_to_word import (
-    extract_data_from_excel,
-    create_word_report,
-    merge_sheets_data,
-    parse_open_responses,
-    get_sheet_count,
-)
-from merge_feedbacks import merge_feedbacks
-from app_logging import get_logger
-import benchmark
+try:
+    from excel_to_word import (
+        extract_data_from_excel,
+        create_word_report,
+        merge_sheets_data,
+        parse_open_responses,
+        get_sheet_count,
+    )
+    from merge_feedbacks import merge_feedbacks
+    from app_logging import get_logger
+    import benchmark
+except Exception as e:
+    # Initialize a temporary tkinter root to show messagebox
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "Lỗi Khởi động",
+        f"Không thể khởi động ứng dụng do lỗi import/khởi tạo:\n\n{traceback.format_exc()}"
+    )
+    with open("crash_error.txt", "w", encoding="utf-8") as f:
+        traceback.print_exc(file=f)
+    sys.exit(1)
 
-_LOG = get_logger()
+try:
+    _LOG = get_logger()
+except Exception as e:
+    _LOG = None
 
 # ═══════════════════════════════════════════════════════════════
 # SETTINGS PERSISTENCE
@@ -1077,5 +1093,20 @@ class App(tk.Tk):
 # ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    try:
+        app = App()
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        # Attempt to show a graphical error dialog
+        try:
+            messagebox.showerror(
+                "Lỗi Hệ Thống",
+                f"Ứng dụng gặp lỗi nghiêm trọng khi đang hoạt động:\n\n{traceback.format_exc()}"
+            )
+        except Exception:
+            pass
+        # Write error log to file
+        with open("crash_error.txt", "w", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
+

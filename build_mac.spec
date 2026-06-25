@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec - macOS .app bundle"""
+import os
+import docx
+
+docx_templates = os.path.join(os.path.dirname(docx.__file__), 'templates')
 
 block_cipher = None
 
@@ -14,6 +18,7 @@ a = Analysis(
         ('app_logging.py', '.'),
         ('benchmark.py', '.'),
         ('feedback_classifier.py', '.'),
+        (docx_templates, 'docx/templates'),
     ],
     hiddenimports=[
         'xlrd', 'openpyxl', 'openpyxl.cell._writer',
