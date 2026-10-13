@@ -1,0 +1,14 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Binary files
+*.xlsx binary
+*.xls binary
+*.docx binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.app binary
+*.ico binary
+*.png binary
+*.jpg binary

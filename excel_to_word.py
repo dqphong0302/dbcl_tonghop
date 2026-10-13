@@ -27,6 +27,12 @@ from docx.oxml import parse_xml
 import json
 from pathlib import Path
 from data_utils import open_workbook as _open_workbook
+try:
+    from app_logging import get_logger
+    log = get_logger()
+except Exception:
+    import logging
+    log = logging.getLogger("dbcl")
 
 # ═══════════════════════════════════════════════════════════════════
 # CẤU HÌNH - Điều chỉnh theo nhu cầu
@@ -1251,12 +1257,14 @@ def process_file(input_path, output_dir=None):
                 print(f"     ├─ 📊 ĐÃ GỘP: {len(all_data)} sheets, {n_q} câu, {total_sv} SV")
         
         if outputs:
+            log.info("Hoàn tất tạo %d file Word cho %s", len(outputs), os.path.basename(input_path))
             print(f"     └─ ✅ Tạo {len(outputs)} file thành công")
             return outputs
         else:
             return None
     
     except Exception as e:
+        log.error("Lỗi khi xử lý file %s: %s", input_path, e)
         print(f"     └─ ❌ Lỗi: {e}")
         import traceback
         traceback.print_exc()

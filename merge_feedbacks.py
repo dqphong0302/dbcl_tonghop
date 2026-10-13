@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Module gộp và phân loại ý kiến đóng góp mở từ nhiều file khảo sát Excel (.xls / .xlsx).
+"""
 import sys
 import os
 import argparse
+from typing import List, Optional
 from docx import Document
 from docx.shared import Pt, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from excel_to_word import parse_open_responses, CONFIG
 from data_utils import open_workbook, detect_feedback_column
 from app_logging import get_logger
@@ -12,7 +17,8 @@ import feedback_classifier as fc
 
 log = get_logger()
 
-def extract_feedbacks(filepath):
+
+def extract_feedbacks(filepath: str) -> List[str]:
     """Trích xuất ý kiến mở từ file feedback (.xls/.xlsx).
 
     Dò cột feedback TỰ ĐỘNG theo tiêu đề (không hard-code index 36),
@@ -49,7 +55,9 @@ def extract_feedbacks(filepath):
         print(f"  ❌ Lỗi đọc file {filepath}: {e}")
     return feedbacks
 
-def merge_feedbacks(input_files, output_dir=None):
+
+def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) -> Optional[str]:
+    """Gộp ý kiến mở từ nhiều file khảo sát, phân loại theo chủ đề/sắc thái và xuất ra Word."""
     if not input_files:
         return None
     
@@ -73,7 +81,7 @@ def merge_feedbacks(input_files, output_dir=None):
             unique_feedbacks.append(fb)
             
     if not unique_feedbacks:
-        print("  ⚠️ Không tìm thấy feedback nào trong các cột AK.")
+        print("  ⚠️ Không tìm thấy feedback nào hợp lệ.")
         return None
         
     # Tạo file Word
@@ -96,7 +104,7 @@ def merge_feedbacks(input_files, output_dir=None):
     style.paragraph_format.line_spacing = 1.5
     
     heading = doc.add_paragraph("TỔNG HỢP FEEDBACKS", style='Heading 1')
-    heading.alignment = 1 # Center
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_paragraph(f"Tổng số ý kiến đóng góp: {len(unique_feedbacks)}")
 
@@ -106,13 +114,13 @@ def merge_feedbacks(input_files, output_dir=None):
         log.info("Phân loại %d ý kiến theo chủ đề & sắc thái", result.total)
 
         doc.add_paragraph()
-        h2 = doc.add_paragraph("PHÂN LOẠI THEO CHỦ ĐỀ", style='Heading 2')
+        doc.add_paragraph("PHÂN LOẠI THEO CHỦ ĐỀ", style='Heading 2')
         for topic, pct in result.topic_percentages().items():
             cnt = result.topic_counts[topic]
             doc.add_paragraph(f"• {topic}: {cnt} ý kiến ({pct}%)")
 
         doc.add_paragraph()
-        h3 = doc.add_paragraph("PHÂN LOẠI THEO SẮC THÁI", style='Heading 2')
+        doc.add_paragraph("PHÂN LOẠI THEO SẮC THÁI", style='Heading 2')
         for s, pct in result.sentiment_percentages().items():
             cnt = result.sentiment_counts[s]
             doc.add_paragraph(f"• {s.capitalize()}: {cnt} ý kiến ({pct}%)")
@@ -140,10 +148,17 @@ def merge_feedbacks(input_files, output_dir=None):
     print(f"  ✅ Đã lưu {len(unique_feedbacks)} feedbacks vào {os.path.basename(output_path)}")
     return output_path
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Gộp feedbacks từ cột AK của nhiều file Excel")
-    parser.add_argument("files", nargs="*", help="Danh sách file Excel (.xls)")
+
+def main():
+    """Hàm chạy dòng lệnh (CLI)."""
+    parser = argparse.ArgumentParser(description="Gộp và phân loại feedbacks từ nhiều file Excel khảo sát")
+    parser.add_argument("files", nargs="*", help="Danh sách file Excel (.xls/.xlsx)")
+    parser.add_argument("--output-dir", "-o", help="Thư mục lưu file Feedbacks.docx kết quả")
     args = parser.parse_args()
     
-    files = args.files if args.files else [f for f in os.listdir('.') if f.endswith('.xls')]
-    merge_feedbacks(files)
+    files = args.files if args.files else [f for f in os.listdir('.') if f.endswith(('.xls', '.xlsx'))]
+    merge_feedbacks(files, output_dir=args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

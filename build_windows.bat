@@ -20,7 +20,7 @@ if errorlevel 1 (
 
 :: Cài đặt dependencies
 echo [1/3] Cài đặt thư viện cần thiết...
-pip install -r requirements.txt --quiet
+pip install -r requirements-dev.txt --quiet
 if errorlevel 1 (
     echo ❌ Lỗi cài đặt thư viện!
     pause

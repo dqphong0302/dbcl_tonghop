@@ -278,6 +278,18 @@ class LogWidget(tk.Frame):
 
     def log(self, msg, tag=None):
         ts = datetime.now().strftime("%H:%M:%S")
+        if _LOG:
+            clean_msg = msg.strip()
+            if clean_msg and not clean_msg.startswith("═"):
+                if tag == "error":
+                    _LOG.error(clean_msg)
+                elif tag == "warning":
+                    _LOG.warning(clean_msg)
+                elif tag in ("info", "success"):
+                    _LOG.info(clean_msg)
+                else:
+                    _LOG.debug(clean_msg)
+
         def _do():
             self._txt.configure(state="normal")
             self._txt.insert("end", f"[{ts}] ", "dim")
@@ -1093,13 +1105,13 @@ class App(tk.Tk):
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
+def main():
+    """Điểm khởi chạy ứng dụng GUI."""
     try:
         app = App()
         app.mainloop()
     except Exception as e:
         import traceback
-        # Attempt to show a graphical error dialog
         try:
             messagebox.showerror(
                 "Lỗi Hệ Thống",
@@ -1107,7 +1119,10 @@ if __name__ == "__main__":
             )
         except Exception:
             pass
-        # Write error log to file
         with open("crash_error.txt", "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
+
+
+if __name__ == "__main__":
+    main()
 

@@ -24,7 +24,7 @@ echo -e "ℹ️  Sử dụng: ${YELLOW}${PYTHON_VERSION}${NC}"
 
 # 2. Cài đặt các thư viện phụ thuộc
 echo -e "\n[1/4] Đang cài đặt/cập nhật thư viện..."
-python3 -m pip install -r requirements.txt --quiet
+python3 -m pip install -r requirements-dev.txt --quiet
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Lỗi cài đặt thư viện phụ thuộc!${NC}"
     exit 1

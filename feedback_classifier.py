@@ -123,12 +123,18 @@ class ClassificationResult:
 OTHER_TOPIC = "Khác"
 
 
+def _match_keyword(norm: str, kw: str) -> bool:
+    """Khớp từ khóa theo ranh giới từ để tránh lỗi substring (vd: 'khó' dính vào 'khóa biểu')."""
+    pattern = r'(?:\b|^)' + re.escape(kw.strip()) + r'(?:\b|$)'
+    return bool(re.search(pattern, norm))
+
+
 def classify_topic(text: str) -> List[str]:
     """Trả về danh sách chủ đề khớp (có thể nhiều); rỗng -> ['Khác']."""
     norm = _norm(text)
     matched = []
     for topic, kws in TOPIC_KEYWORDS.items():
-        if any(kw in norm for kw in kws):
+        if any(_match_keyword(norm, kw) for kw in kws):
             matched.append(topic)
     return matched if matched else [OTHER_TOPIC]
 
@@ -136,8 +142,8 @@ def classify_topic(text: str) -> List[str]:
 def classify_sentiment(text: str) -> str:
     """Phân loại sắc thái dựa trên từ khóa khen/góp ý."""
     norm = _norm(text)
-    pos = sum(1 for w in POSITIVE_WORDS if w in norm)
-    sug = sum(1 for w in SUGGEST_WORDS if w in norm)
+    pos = sum(1 for w in POSITIVE_WORDS if _match_keyword(norm, w))
+    sug = sum(1 for w in SUGGEST_WORDS if _match_keyword(norm, w))
     if sug > pos:
         return "góp ý"
     if pos > 0:
