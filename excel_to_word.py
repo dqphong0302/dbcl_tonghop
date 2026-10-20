@@ -24,7 +24,11 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
+import copy
+from xml.sax.saxutils import escape as xml_escape
 import json
+from dataclasses import dataclass, field
+from typing import List, Optional
 from pathlib import Path
 from data_utils import open_workbook as _open_workbook
 try:
@@ -34,11 +38,129 @@ except Exception:
     import logging
     log = logging.getLogger("dbcl")
 
+XML_CLASS_BOX_TEMPLATE = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+       xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+       xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+       xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+       xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+       xmlns:v="urn:schemas-microsoft-com:vml"
+       xmlns:o="urn:schemas-microsoft-com:office:office">
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:szCs w:val="24"/>
+    </w:rPr>
+    <mc:AlternateContent>
+      <mc:Choice Requires="wps">
+        <w:drawing>
+          <wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+            <wp:simplePos x="0" y="0"/>
+            <wp:positionH relativeFrom="column">
+              <wp:posOffset>-795020</wp:posOffset>
+            </wp:positionH>
+            <wp:positionV relativeFrom="paragraph">
+              <wp:posOffset>-1365885</wp:posOffset>
+            </wp:positionV>
+            <wp:extent cx="771525" cy="285750"/>
+            <wp:effectExtent l="0" t="0" r="28575" b="19050"/>
+            <wp:wrapNone/>
+            <wp:docPr id="7" name="Text Box 7"/>
+            <wp:cNvGraphicFramePr>
+              <a:graphicFrameLocks/>
+            </wp:cNvGraphicFramePr>
+            <a:graphic>
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp>
+                  <wps:cNvSpPr txBox="1">
+                    <a:spLocks/>
+                  </wps:cNvSpPr>
+                  <wps:spPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="771525" cy="285750"/>
+                    </a:xfrm>
+                    <a:prstGeom prst="rect">
+                      <a:avLst/>
+                    </a:prstGeom>
+                    <a:solidFill>
+                      <a:sysClr val="window" lastClr="FFFFFF"/>
+                    </a:solidFill>
+                    <a:ln w="6350">
+                      <a:solidFill>
+                        <a:prstClr val="black"/>
+                      </a:solidFill>
+                    </a:ln>
+                  </wps:spPr>
+                  <wps:txbx>
+                    <w:txbxContent>
+                      <w:p>
+                        <w:pPr>
+                          <w:jc w:val="center"/>
+                        </w:pPr>
+                        <w:r>
+                          <w:rPr>
+                            <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+                            <w:b/>
+                            <w:sz w:val="24"/>
+                            <w:szCs w:val="24"/>
+                          </w:rPr>
+                          <w:t>{CLASS_CODE}</w:t>
+                        </w:r>
+                      </w:p>
+                    </w:txbxContent>
+                  </wps:txbx>
+                  <wps:bodyPr rot="0" spcFirstLastPara="0" vertOverflow="overflow" horzOverflow="overflow" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" numCol="1" spcCol="0" rtlCol="0" fromWordArt="0" anchor="t" anchorCtr="0" forceAA="0" compatLnSpc="1">
+                    <a:prstTxWarp prst="textNoShape">
+                      <a:avLst/>
+                    </a:prstTxWarp>
+                    <a:noAutofit/>
+                  </wps:bodyPr>
+                </wps:wsp>
+              </a:graphicData>
+            </a:graphic>
+          </wp:anchor>
+        </w:drawing>
+      </mc:Choice>
+      <mc:Fallback>
+        <w:pict>
+          <v:shapetype id="_x0000_t202" coordsize="21600,21600" spt="202" path="m,l,21600r21600,l21600,xe">
+            <v:stroke joinstyle="miter"/>
+            <v:path gradientshapeok="t" connecttype="rect"/>
+          </v:shapetype>
+          <v:shape id="Text Box 7" type="#_x0000_t202" style="position:absolute;margin-left:-62.6pt;margin-top:-107.55pt;width:60.75pt;height:22.5pt;z-index:251659264;visibility:visible;mso-wrap-style:square;mso-position-horizontal:absolute;mso-position-vertical:absolute;v-text-anchor:top" fillcolor="window" strokeweight=".5pt">
+            <v:textbox>
+              <w:txbxContent>
+                <w:p>
+                  <w:pPr>
+                    <w:jc w:val="center"/>
+                  </w:pPr>
+                  <w:r>
+                    <w:rPr>
+                      <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+                      <w:b/>
+                      <w:sz w:val="24"/>
+                      <w:szCs w:val="24"/>
+                    </w:rPr>
+                    <w:t>{CLASS_CODE}</w:t>
+                  </w:r>
+                </w:p>
+              </w:txbxContent>
+            </v:textbox>
+          </v:shape>
+        </w:pict>
+      </mc:Fallback>
+    </mc:AlternateContent>
+  </w:r>
+</w:p>"""
+
+
 # ═══════════════════════════════════════════════════════════════════
 # CẤU HÌNH - Điều chỉnh theo nhu cầu
 # ═══════════════════════════════════════════════════════════════════
 
-CONFIG = {
+DEFAULT_CONFIG = {
     "university_name": "ĐẠI HỌC Y DƯỢC\nTHÀNH PHỐ HỒ CHÍ MINH",
     "faculty_name": "KHOA KHCB",                # Tên khoa/đơn vị
     "country_header": "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
@@ -69,6 +191,12 @@ CONFIG = {
         r'^dạ\s*không\s*có\.?$',
         r'^không\s*có\s*ý\s*kiến\.?$',
         r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
+        # Chuỗi chỉ gồm từ từ chối: "KHÔNG Dạ không ạ!", "Hong ạ", "Em không có ạ.không ạ"
+        r'^((dạ|thưa|em|mình|tôi|không|khong|khoong|hong|khum|ko|k|có|ạ|aj|nha|nhé)[\s.,!]*)+$',
+        # "Em/Mình/Tôi (k/ko/không) có (ý kiến/góp ý) (gì) (ạ/nữa/thêm)"
+        r'^(dạ\s+)?(em|mình|tôi)\s+(k|ko|không|chưa)\s+có(\s+(ý\s*kiến|góp\s*ý|đóng\s*góp|gì|ạ|nha|nhé|nữa|thêm|hết))*\s*[.!]*$',
+        # "Không có ý kiến…" kèm phần lặp lại dính liền ("Không có ý kiếnem không có ý kiến gì nữa")
+        r'^không\s*có\s*(ý\s*kiến|đóng\s*góp|góp\s*ý)\S*(\s+(em|gì|ạ|nha|nhé|nữa|thêm|không|có|ý|kiến|đóng|góp))*\s*[.!]*$',
     ],
 
     "scale_labels": [                            # Nhãn thang đo Likert 5 mức
@@ -78,105 +206,82 @@ CONFIG = {
         "4. Đồng ý",
         "5. Hoàn toàn đồng ý",
     ],
-    # Các nhóm tiêu chí (section) - được tự động phát hiện từ Excel
-    # Nếu không tự động phát hiện được, sẽ dùng mapping mặc định bên dưới
-    "section_mapping": {
-        # Câu C1-C10 trong Excel khảo sát -> section name
-        # Điều chỉnh nếu file Excel có cấu trúc khác
-    },
-    "default_sections": [
-        {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "questions": range(1, 11)},
-        {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "questions": range(11, 15)},
-        {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "questions": range(15, 19)},
-        {"name": "IV. CẢM NHẬN CHUNG", "questions": range(19, 23)},
-    ],
+    # Nhóm tiêu chí trong bảng kết quả. Mỗi khối (cách nhau dòng trống) là một
+    # mẫu phiếu; dòng có dạng "Tên nhóm | từ-đến" theo số câu chính (8.1 → 8).
+    # Khối được chọn là khối có số câu lớn nhất trùng với số câu lớn nhất của file.
+    "section_layouts": (
+        "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN | 1-10\n"
+        "II. PHƯƠNG PHÁP GIẢNG DẠY | 11-14\n"
+        "III. LƯỢNG GIÁ HỌC PHẦN | 15-18\n"
+        "IV. CẢM NHẬN CHUNG | 19-22\n"
+        "\n"
+        "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN | 1-7\n"
+        "II. PHƯƠNG PHÁP GIẢNG DẠY | 8\n"
+        "III. LƯỢNG GIÁ HỌC PHẦN | 9-15\n"
+        "IV. CẢM NHẬN CHUNG | 16\n"
+        "\n"
+        "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN | 1-10\n"
+        "II. PHƯƠNG PHÁP GIẢNG DẠY | 11\n"
+        "III. LƯỢNG GIÁ HỌC PHẦN | 12-18\n"
+        "IV. CẢM NHẬN CHUNG | 19"
+    ),
+    "signer_title": "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN",
 }
+
+CONFIG = copy.deepcopy(DEFAULT_CONFIG)
 
 SETTINGS_FILE = Path.home() / ".dbcl_tonghop_settings.json"
 
-def load_settings_into_config():
-    global CONFIG
-    CONFIG["university_name"] = "ĐẠI HỌC Y DƯỢC\nTHÀNH PHỐ HỒ CHÍ MINH"
-    CONFIG["faculty_name"] = "KHOA KHCB"
-    CONFIG["country_header"] = "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
-    CONFIG["country_slogan"] = "Độc lập – Tự do – Hạnh phúc"
-    CONFIG["report_title_lines"] = [
-        "BÁO CÁO TỔNG HỢP KẾT QUẢ",
-        "KHẢO SÁT SINH VIÊN SAU KHI KẾT THÚC HỌC PHẦN CƠ SỞ",
-        "& ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN",
-    ]
-    CONFIG["font_name"] = "Times New Roman"
-    CONFIG["font_size"] = 12
-    CONFIG["margin_top"] = 2.0
-    CONFIG["margin_bottom"] = 2.0
-    CONFIG["margin_left"] = 2.5
-    CONFIG["margin_right"] = 2.0
-    CONFIG["table_header_bg"] = "D9E2F3"
-    CONFIG["open_response_lines"] = 4
-    CONFIG["feedback_search_keywords"] = ["ý kiến đóng góp", "feedback"]
-    CONFIG["feedback_skip_keywords"] = ["không", "không có", "khong", "none", "n/a", "chưa có", "không có ý kiến", "không có ý kiến gì"]
-    CONFIG["feedback_skip_patterns"] = [
-        r'^không\s*(ạ|có|cóa)?\.?$',
-        r'^ko\.?$',
-        r'^khong\.?$',
-        r'^dạ\s*không\s*(ạ|có)?\.?$',
-        r'^không\s*có\s*(góp\s*ý|ý\s*kiến)?\.?$',
-        r'^dạ\s*không\s*có\.?$',
-        r'^không\s*có\s*ý\s*kiến\.?$',
-        r'^em\s*không\s*có\s*ý\s*kiến\s*(ạ)?\.?$',
-    ]
-    
-    try:
-        if SETTINGS_FILE.exists():
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if "word_format" in data:
-                wf = data["word_format"]
-                if "university_name" in wf:
-                    CONFIG["university_name"] = wf["university_name"]
-                if "faculty_name" in wf:
-                    CONFIG["faculty_name"] = wf["faculty_name"]
-                if "country_header" in wf:
-                    CONFIG["country_header"] = wf["country_header"]
-                if "country_slogan" in wf:
-                    CONFIG["country_slogan"] = wf["country_slogan"]
-                if "report_title" in wf:
-                    CONFIG["report_title_lines"] = [line.strip() for line in wf["report_title"].split("\n") if line.strip()]
-                if "font_name" in wf:
-                    CONFIG["font_name"] = wf["font_name"]
-                if "font_size" in wf:
-                    CONFIG["font_size"] = int(wf["font_size"])
-                if "margin_top" in wf:
-                    CONFIG["margin_top"] = float(wf["margin_top"])
-                if "margin_bottom" in wf:
-                    CONFIG["margin_bottom"] = float(wf["margin_bottom"])
-                if "margin_left" in wf:
-                    CONFIG["margin_left"] = float(wf["margin_left"])
-                if "margin_right" in wf:
-                    CONFIG["margin_right"] = float(wf["margin_right"])
-                if "table_header_bg" in wf:
-                    CONFIG["table_header_bg"] = wf["table_header_bg"]
-                if "open_response_lines" in wf:
-                    CONFIG["open_response_lines"] = int(wf["open_response_lines"])
+# Ánh xạ khóa trong file settings (mục "word_format") → (khóa CONFIG, hàm chuyển kiểu)
+_WORD_FORMAT_KEYS = {
+    "university_name": ("university_name", str),
+    "faculty_name": ("faculty_name", str),
+    "country_header": ("country_header", str),
+    "country_slogan": ("country_slogan", str),
+    "report_title": ("report_title_lines",
+                     lambda v: [ln.strip() for ln in str(v).split("\n") if ln.strip()]),
+    "font_name": ("font_name", str),
+    "font_size": ("font_size", int),
+    "margin_top": ("margin_top", float),
+    "margin_bottom": ("margin_bottom", float),
+    "margin_left": ("margin_left", float),
+    "margin_right": ("margin_right", float),
+    "table_header_bg": ("table_header_bg", str),
+    "open_response_lines": ("open_response_lines", int),
+    "section_layouts": ("section_layouts", str),
+    "signer_title": ("signer_title", str),
+}
 
-            if "feedback_config" in data:
-                fc = data["feedback_config"]
-                if "search_keywords" in fc:
-                    if isinstance(fc["search_keywords"], list):
-                        CONFIG["feedback_search_keywords"] = fc["search_keywords"]
-                    else:
-                        CONFIG["feedback_search_keywords"] = [k.strip() for k in fc["search_keywords"].split(",") if k.strip()]
-                if "skip_keywords" in fc:
-                    if isinstance(fc["skip_keywords"], list):
-                        CONFIG["feedback_skip_keywords"] = fc["skip_keywords"]
-                    else:
-                        CONFIG["feedback_skip_keywords"] = [k.strip() for k in fc["skip_keywords"].split(",") if k.strip()]
-                if "skip_patterns" in fc:
-                    if isinstance(fc["skip_patterns"], list):
-                        CONFIG["feedback_skip_patterns"] = fc["skip_patterns"]
-                    else:
-                        CONFIG["feedback_skip_patterns"] = [p.strip() for p in fc["skip_patterns"].split("\n") if p.strip()]
+# Mục "feedback_config": (khóa CONFIG, ký tự phân tách khi lưu dạng chuỗi)
+_FEEDBACK_KEYS = {
+    "search_keywords": ("feedback_search_keywords", ","),
+    "skip_keywords": ("feedback_skip_keywords", ","),
+    "skip_patterns": ("feedback_skip_patterns", "\n"),
+}
+
+
+def _as_list(value, sep):
+    if isinstance(value, list):
+        return value
+    return [v.strip() for v in str(value).split(sep) if v.strip()]
+
+
+def load_settings_into_config():
+    """Nạp lại CONFIG = mặc định + các giá trị người dùng đã lưu trong SETTINGS_FILE."""
+    CONFIG.clear()
+    CONFIG.update(copy.deepcopy(DEFAULT_CONFIG))
+    try:
+        if not SETTINGS_FILE.exists():
+            return
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        for key, (cfg_key, cast) in _WORD_FORMAT_KEYS.items():
+            if key in data.get("word_format", {}):
+                CONFIG[cfg_key] = cast(data["word_format"][key])
+        for key, (cfg_key, sep) in _FEEDBACK_KEYS.items():
+            if key in data.get("feedback_config", {}):
+                CONFIG[cfg_key] = _as_list(data["feedback_config"][key], sep)
     except Exception as e:
-        print(f"Error loading settings into CONFIG: {e}")
+        log.warning("Không đọc được cấu hình người dùng: %s", e)
 
 # Tải cấu hình tự động khi import
 load_settings_into_config()
@@ -378,9 +483,14 @@ def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True)
                         except (ValueError, TypeError):
                             percentages.append(0)
                 
-                # Tính điểm trung bình
-                if total > 0 and len(counts) == 5:
-                    avg = sum((i + 1) * counts[i] for i in range(5)) / total
+                # Thiếu dòng "Tỷ lệ" → tự tính từ số lượng
+                answered = sum(counts)
+                if not percentages and total > 0:
+                    percentages = [c / total for c in counts]
+
+                # Điểm trung bình trên số SV có chọn mức (bỏ phiếu trống câu này)
+                if answered > 0 and len(counts) == 5:
+                    avg = sum((i + 1) * counts[i] for i in range(5)) / answered
                 else:
                     avg = 0
                 
@@ -435,6 +545,33 @@ def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True)
 # XỬ LÝ Ý KIẾN ĐÓNG GÓP (TÁCH CÂU TRẢ LỜI)
 # ═══════════════════════════════════════════════════════════════════
 
+# Từ xưng hô/danh từ thường đứng ngay trước tên riêng viết hoa ("thầy Nam", "quận Bình Thạnh")
+_NAME_PREFIXES = re.compile(
+    r"(?:^|\s)(?:thầy|cô|thầy cô|anh|chị|bạn|giảng viên|gv|trường|khoa|bộ môn|môn|"
+    r"quận|phường|tp|thành phố|cơ sở|bệnh viện|bv|đại học|ĐH)$", re.IGNORECASE)
+# "không"/"dạ" dính liền chữ trước (vd "Khôngkhông có", "ạdạ không") — không có âm tiết
+# tiếng Việt hợp lệ nào kết thúc bằng các chuỗi này nên tách an toàn.
+_GLUED_REFUSAL = re.compile(r"(?<=[^\W\d_])(?=(?:không|khong|dạ)(?:\s|$|[.,!?]))", re.IGNORECASE)
+
+
+def _split_glued_refusals(parts):
+    out = []
+    for p in parts:
+        out.extend(_GLUED_REFUSAL.split(p))
+    return out
+
+
+def _rejoin_names(parts):
+    """Nối lại các đoạn bị tách nhầm trước tên riêng (vd "Em mong thầy" + "Nam giảng chậm")."""
+    out = []
+    for p in parts:
+        if out and _NAME_PREFIXES.search(out[-1].strip()):
+            out[-1] = out[-1].rstrip() + " " + p.lstrip()
+        else:
+            out.append(p)
+    return out
+
+
 def parse_open_responses(raw_text):
     """Tách các câu trả lời mở từ chuỗi nối liền, loại bỏ câu trả lời trống/vô nghĩa."""
     if not raw_text:
@@ -480,7 +617,7 @@ def parse_open_responses(raw_text):
         # Pattern: sau dấu chấm/không dấu + chữ cái viết hoa
         sub_parts = re.split(r'(?<=[a-zàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ\.\!\?])\s*(?=[A-ZÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ])', part)
         
-        for sp in sub_parts:
+        for sp in _rejoin_names(_split_glued_refusals(sub_parts)):
             sp = sp.strip().rstrip(".")
             if not sp or len(sp) < 3:
                 continue
@@ -573,6 +710,55 @@ def format_cell_text(cell, text, bold=False, italic=False, font_size=None, align
         run.italic = True
     if alignment is not None:
         para.alignment = alignment
+
+
+def parse_section_layouts(text):
+    """"Tên | 1-7" (mỗi dòng), các mẫu phiếu cách nhau bằng dòng trống → list[list[(tên, từ, đến)]]."""
+    layouts, current = [], []
+    for line in str(text).splitlines() + [""]:
+        line = line.strip()
+        if not line:
+            if current:
+                layouts.append(current)
+                current = []
+            continue
+        name, _, rng = line.rpartition("|")
+        m = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+))?\s*", rng)
+        if not name.strip() or not m:
+            raise ValueError(f"Dòng nhóm tiêu chí không hợp lệ: “{line}” (đúng dạng: Tên nhóm | 1-7)")
+        lo = int(m.group(1))
+        current.append((name.strip(), lo, int(m.group(2) or lo)))
+    return layouts
+
+
+def _major_number(q):
+    m = re.match(r"(\d+)", str(q.get("number", "")))
+    return int(m.group(1)) if m else None
+
+
+def build_sections(questions):
+    """Chia câu hỏi (đã sắp theo thứ tự trong phiếu) thành nhóm theo CONFIG["section_layouts"].
+    Trả về list[{"name", "start", "end"}] (chỉ số trong questions) hoặc None nếu không mẫu nào khớp."""
+    majors = [_major_number(q) for q in questions]
+    if not questions or None in majors:
+        return None
+    try:
+        layouts = parse_section_layouts(CONFIG.get("section_layouts", ""))
+    except ValueError as e:
+        log.warning("%s", e)
+        return None
+    for layout in layouts:
+        if layout[-1][2] != max(majors):
+            continue
+        sections = []
+        for name, lo, hi in layout:
+            idx = [i for i, n in enumerate(majors) if lo <= n <= hi]
+            if idx:
+                sections.append({"name": name, "start": idx[0], "end": idx[-1] + 1})
+        covered = sum(s["end"] - s["start"] for s in sections)
+        if covered == len(questions):
+            return sections
+    return None
 
 
 def create_word_report(data, output_path):
@@ -672,21 +858,8 @@ def create_word_report(data, output_path):
             )
             tcPr.append(tcBorders)
     
-    doc.add_paragraph()  # Spacer
-    
-    # ===== TIÊU ĐỀ BÁO CÁO =====
-    for line in CONFIG["report_title_lines"]:
-        add_formatted_paragraph(doc, line, bold=True, font_size=12,
-                                alignment=WD_ALIGN_PARAGRAPH.CENTER, space_after=0)
-    
-    doc.add_paragraph()  # Spacer
-    
-    # ===== PHẦN 1: THÔNG TIN CHUNG =====
-    add_formatted_paragraph(doc, "Phần 1. Thông tin chung", bold=True, font_size=12, space_after=6)
-    
-    meta = data["meta"]
-    
-    # Trích xuất tên môn học và mã
+    # Trích xuất metadata trước để dùng cho tiêu đề và text box mã lớp
+    meta = data.get("meta", {})
     mon_hoc = meta.get("mon_hoc", "")
     mon_hoc_match = re.match(r'(\d+)\s*-\s*(.*)', mon_hoc)
     if mon_hoc_match:
@@ -695,8 +868,45 @@ def create_word_report(data, output_path):
         mon_display = f"{ten_mon} ({ma_mon})"
     else:
         mon_display = mon_hoc
+        ten_mon = mon_hoc
+
+    if not ten_mon and meta.get("dot_khao_sat"):
+        parts = meta.get("dot_khao_sat").split()
+        if len(parts) >= 2:
+            sub_parts = parts[1:]
+            if sub_parts and re.match(r'\d+HK\w+', sub_parts[-1]):
+                sub_parts = sub_parts[:-1]
+            ten_mon = " ".join(sub_parts)
+
+    lop_hoc = meta.get("lop_hoc", "").strip()
+    if not lop_hoc and meta.get("dot_khao_sat"):
+        lop_hoc = meta.get("dot_khao_sat").split()[0]
+
+    # Spacer + Text Box mã viết tắt của lớp ở góc trên bên trái đầu trang giấy (theo mẫu mới - Hình 1)
+    if lop_hoc:
+        p_box = parse_xml(XML_CLASS_BOX_TEMPLATE.format(CLASS_CODE=xml_escape(lop_hoc)))
+        header_table._tbl.addnext(p_box)
+    else:
+        doc.add_paragraph()  # Spacer
+
+    # ===== TIÊU ĐỀ BÁO CÁO =====
+    for line in CONFIG["report_title_lines"]:
+        title_line = line
+        if ten_mon:
+            if "HỌC PHẦN CƠ SỞ" in title_line.upper():
+                title_line = re.sub(r'HỌC PHẦN CƠ SỞ', f'HỌC PHẦN {ten_mon.upper()}', title_line, flags=re.IGNORECASE)
+            elif "{mon_hoc}" in title_line or "{ten_mon}" in title_line:
+                title_line = title_line.replace("{mon_hoc}", ten_mon.upper()).replace("{ten_mon}", ten_mon.upper())
+            elif "KHẢO SÁT SINH VIÊN SAU KHI KẾT THÚC HỌC PHẦN" in title_line:
+                title_line = f"KHẢO SÁT SINH VIÊN SAU KHI KẾT THÚC HỌC PHẦN {ten_mon.upper()}"
+        add_formatted_paragraph(doc, title_line, bold=True, font_size=12,
+                                alignment=WD_ALIGN_PARAGRAPH.CENTER, space_after=0)
     
-    lop_hoc = meta.get("lop_hoc", "")
+    doc.add_paragraph()  # Spacer
+    
+    # ===== PHẦN 1: THÔNG TIN CHUNG =====
+    add_formatted_paragraph(doc, "Phần 1. Thông tin chung", bold=True, font_size=12, space_after=6)
+    
     thoi_gian = meta.get("thoi_gian_ks", "")
     phieu_ks = meta.get("phieu_khao_sat", "")
     
@@ -860,29 +1070,13 @@ def create_word_report(data, output_path):
         # Phân chia thành sections dựa trên số lượng câu hỏi
         n_q = len(questions)
         
-        # Tạo sections tự động
-        sections = []
-        if n_q <= 10:
-            sections = [{"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": n_q}]
-        elif n_q <= 14:
-            sections = [
-                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
-                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": n_q},
-            ]
-        elif n_q <= 18:
-            sections = [
-                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
-                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": 14},
-                {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "start": 14, "end": n_q},
-            ]
-        else:
-            sections = [
-                {"name": "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN", "start": 0, "end": 10},
-                {"name": "II. PHƯƠNG PHÁP GIẢNG DẠY", "start": 10, "end": 14},
-                {"name": "III. LƯỢNG GIÁ HỌC PHẦN", "start": 14, "end": 18},
-                {"name": "IV. CẢM NHẬN CHUNG", "start": 18, "end": n_q},
-            ]
-        
+        sections = build_sections(questions)
+        if sections is None:
+            data.setdefault("warnings", []).append(
+                "Không có nhóm tiêu chí nào khớp với số câu của phiếu — gộp tất cả vào một nhóm "
+                "(chỉnh tại Cấu hình → Nhóm tiêu chí)")
+            sections = [{"name": "NỘI DUNG KHẢO SÁT", "start": 0, "end": n_q}]
+
         total_rows = 1 + len(sections) + n_q  # header + section headers + questions
         survey_table = doc.add_table(rows=total_rows, cols=8)
         survey_table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -962,32 +1156,52 @@ def create_word_report(data, output_path):
                 for para in cell.paragraphs:
                     para.paragraph_format.line_spacing = 1.0
     
-    doc.add_paragraph()  # Spacer
+    # Spacer trước Phần 3: Thêm dấu * theo mẫu mới (Hình 3)
+    p_star = doc.add_paragraph()
+    run_star = p_star.add_run("*")
+    run_star.font.name = CONFIG["font_name"]
+    run_star.font.size = Pt(CONFIG["font_size"])
+    run_star._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
+    p_star.paragraph_format.space_before = Pt(0)
+    p_star.paragraph_format.space_after = Pt(0)
+    p_star.paragraph_format.line_spacing = 1.5
     
-    # ===== PHẦN 3: Ý KIẾN ĐÓNG GÓP (để trống) =====
+    # ===== PHẦN 3: Ý KIẾN ĐÓNG GÓP =====
     add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
                             bold=True, font_size=12, space_after=6)
     
-    # Để trống - thêm vài dòng trắng
-    for _ in range(CONFIG.get("open_response_lines", 4)):
+    # Liệt kê ý kiến thực tế; nếu không có thì ghi "*Không có ý kiến." theo mẫu mới (Hình 3)
+    responses = parse_open_responses(data.get("open_responses", ""))
+    for text in responses or ["*Không có ý kiến."]:
+        p_op = add_formatted_paragraph(doc, f"- {text}" if responses else text,
+                                       space_after=0, space_before=0)
+        if responses:
+            p_op.paragraph_format.left_indent = Cm(0.63)
+    
+    # Các dòng trống tiếp theo để dự phòng cho người dùng viết thêm ghi chú
+    for _ in range(max(0, CONFIG.get("open_response_lines", 4) - max(1, len(responses)))):
         doc.add_paragraph()
     
     
     # ===== PHẦN 4: ĐỀ XUẤT KẾ HOẠCH CẢI TIẾN =====
+    # Số tiêu chí = tổng số câu trừ nhóm cuối (CẢM NHẬN CHUNG)
+    n_criteria = len(questions)
+    if questions and len(sections) > 1:
+        n_criteria -= sections[-1]["end"] - sections[-1]["start"]
     add_formatted_paragraph(doc, "Phần 4. Đề xuất kế hoạch cải tiến:", 
                             bold=True, font_size=12, space_after=2)
     
     para_note2 = doc.add_paragraph()
     run_n2 = para_note2.add_run(
         "(Bộ môn, đơn vị đào tạo đề xuất kế hoạch cải tiến cho tối thiểu 2 tiêu chí "
-        "trong 18 tiêu chí khảo sát ở trên, không tính phần CẢM NHẬN CHUNG)"
+        f"trong {n_criteria} tiêu chí khảo sát ở trên, không tính phần CẢM NHẬN CHUNG)"
     )
     run_n2.font.name = CONFIG["font_name"]
     run_n2.font.size = Pt(CONFIG["font_size"])
     run_n2._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
     
-    # Bảng cải tiến (để trống cho người dùng điền)
-    improve_table = doc.add_table(rows=4, cols=4)
+    # Bảng cải tiến (để trống cho người dùng điền, 2 hàng theo mẫu mới)
+    improve_table = doc.add_table(rows=3, cols=4)
     improve_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     improve_table.style = 'Table Grid'
     
@@ -1032,7 +1246,7 @@ def create_word_report(data, output_path):
     
     # Row 0: TRƯỞNG MODULE/TRƯỞNG BỘ MÔN (bên phải)
     format_cell_text(footer_table.cell(0, 0), "", font_size=12)
-    format_cell_text(footer_table.cell(0, 1), "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN", bold=True, font_size=12,
+    format_cell_text(footer_table.cell(0, 1), CONFIG.get("signer_title", ""), bold=True, font_size=12,
                     alignment=WD_ALIGN_PARAGRAPH.CENTER)
     
     # Row 1-2: Dòng trống cho chữ ký
@@ -1073,7 +1287,7 @@ def merge_sheets_data(all_data_list):
         lop = d["meta"].get("lop_hoc", d["meta"].get("dot_khao_sat", ""))
         merged["sheet_names"].append(lop)
     
-    merged["meta"]["lop_hoc"] = ", ".join(filter(None, merged["sheet_names"]))
+    merged["meta"]["lop_hoc"] = ", ".join(dict.fromkeys(filter(None, merged["sheet_names"])))
     
     # Gộp tổng số SV (F5) từ tất cả sheet
     total_tong_sv = 0
@@ -1123,6 +1337,8 @@ def merge_sheets_data(all_data_list):
     
     # === Gộp câu hỏi: cộng dồn counts, tính lại % và TB ===
     n_q = len(base["survey_questions"])
+    if any(len(d["survey_questions"]) != n_q for d in all_data_list):
+        merged["warnings"].append("Các sheet có số câu hỏi khác nhau — chỉ gộp theo số câu của sheet đầu tiên")
     for i in range(n_q):
         bq = base["survey_questions"][i]
         q = {
@@ -1136,6 +1352,10 @@ def merge_sheets_data(all_data_list):
         for d in all_data_list[1:]:
             if i < len(d["survey_questions"]):
                 dq = d["survey_questions"][i]
+                if dq["number"] != bq["number"]:
+                    merged["warnings"].append(
+                        f"Câu thứ {i + 1} không khớp giữa các sheet (C{bq['number']} ≠ C{dq['number']}) "
+                        "— các sheet có thể khác mẫu phiếu")
                 for j in range(len(q["counts"])):
                     if j < len(dq["counts"]):
                         q["counts"][j] += dq["counts"][j]
@@ -1144,8 +1364,9 @@ def merge_sheets_data(all_data_list):
         # Tính lại tỷ lệ và điểm TB
         if q["total"] > 0:
             q["percentages"] = [c / q["total"] for c in q["counts"]]
-            if len(q["counts"]) == 5:
-                q["average"] = round(sum((j + 1) * q["counts"][j] for j in range(5)) / q["total"], 2)
+            answered = sum(q["counts"])
+            if len(q["counts"]) == 5 and answered > 0:
+                q["average"] = round(sum((j + 1) * q["counts"][j] for j in range(5)) / answered, 2)
         else:
             q["percentages"] = [0] * len(q["counts"])
         
@@ -1167,108 +1388,136 @@ def get_sheet_count(filepath):
     return wb.nsheets, wb.sheet_names()
 
 
-def process_file(input_path, output_dir=None):
-    """Xử lý 1 file Excel -> Word. Nếu nhiều sheet thì tổng hợp thành 1 sheet trước rồi mới thực hiện."""
+@dataclass
+class ReportResult:
+    """Kết quả tạo báo cáo cho 1 file Excel (dùng chung cho CLI và GUI)."""
+    input_path: str
+    output_path: Optional[str] = None
+    n_sheets: int = 0
+    n_questions: int = 0
+    n_responses: int = 0
+    total_students: Optional[int] = None
+    error: Optional[str] = None
+    missing_total: bool = False
+    skipped_sheets: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.output_path is not None
+
+    @property
+    def merged(self) -> bool:
+        return self.n_sheets > 1
+
+
+def _absent_count_from_name(basename):
+    """Số SV KHÔNG tham gia khảo sát ghi ở cuối tên file (vd: "... HKI 3" → 3)."""
+    match = re.search(r'\s+(\d+)$', basename)
+    return int(match.group(1)) if match else None
+
+
+def _resolve_total_students(data, all_data, absent):
+    """Tổng SV = số phiếu + SV không tham gia (từ tên file); nếu không có thì
+    dùng ô F5 (cộng dồn qua các sheet khi gộp). Trả về None nếu không xác định được."""
+    if absent is not None:
+        total_phieu = data["survey_questions"][0].get("total", 0) if data["survey_questions"] else 0
+        return total_phieu + absent
+    f5_values = [d["meta"].get("tong_so_sv") for d in all_data]
+    f5_values = [v for v in f5_values if v is not None]
+    return sum(f5_values) if f5_values else None
+
+
+def generate_report(input_path, output_dir=None, on_progress=None):
+    """Đọc 1 file Excel (gộp tất cả sheet có dữ liệu) và xuất báo cáo Word.
+
+    on_progress(msg): callback tùy chọn nhận thông báo từng sheet bị bỏ qua.
+    Không ném lỗi — mọi lỗi được ghi vào ReportResult.error.
+    """
+    result = ReportResult(input_path=input_path)
+    notify = on_progress or (lambda msg: None)
     if not os.path.exists(input_path):
-        print(f"  ❌ File không tồn tại: {input_path}")
-        return None
-    
+        result.error = "File không tồn tại"
+        return result
+
     basename = os.path.splitext(os.path.basename(input_path))[0]
-    
-    # Loại bỏ số SV không tham gia ở cuối tên file (nếu có)
     clean_basename = re.sub(r'\s+\d+$', '', basename)
-    final_basename = f"{clean_basename} (gộp)"
-    
-    out_dir = output_dir or os.path.dirname(input_path)
-    os.makedirs(out_dir, exist_ok=True)
-    
-    print(f"  📄 Đang xử lý: {os.path.basename(input_path)}")
-    
+    out_dir = output_dir or os.path.dirname(os.path.abspath(input_path))
+
     try:
         n_sheets, sheet_names = get_sheet_count(input_path)
-        print(f"     ├─ Số sheet: {n_sheets}")
-        
         all_data = []
         for si in range(n_sheets):
-            data = extract_data_from_excel(input_path, sheet_index=si, apply_filename_suffix=False)
+            try:
+                data = extract_data_from_excel(input_path, sheet_index=si, apply_filename_suffix=False)
+            except Exception as e:
+                notify(f'Sheet {si + 1} "{sheet_names[si]}": lỗi đọc – {e}')
+                result.skipped_sheets.append(sheet_names[si])
+                continue
             if data["survey_questions"]:
                 all_data.append(data)
             else:
-                print(f"     ├─ Sheet {si + 1} \"{sheet_names[si]}\": ⏭ bỏ qua (không có dữ liệu)")
+                notify(f'Sheet {si + 1} "{sheet_names[si]}": bỏ qua (không có dữ liệu)')
+                result.skipped_sheets.append(sheet_names[si])
 
         if not all_data:
-            print(f"     └─ ⚠️ Không có sheet nào chứa dữ liệu khảo sát")
-            return None
+            result.error = "Không có sheet nào chứa dữ liệu khảo sát"
+            return result
 
-        outputs = []
-        
-        # Lấy số SV KHÔNG tham gia khảo sát từ tên file
-        match = re.search(r'\s+(\d+)$', basename)
-        sv_khong_khao_sat = int(match.group(1)) if match else None
-
+        result.n_sheets = len(all_data)
         if len(all_data) == 1:
-            data = all_data[0]
-            total_phieu = data["survey_questions"][0].get("total", 0) if data["survey_questions"] else 0
-            if sv_khong_khao_sat is not None:
-                data["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
-            
-            if data["meta"].get("tong_so_sv") is None:
-                print(f"     ├─ ❌ Không xác định được Tổng số SV (ô F5 và tên file đều trống)!")
-                return None
-
-            sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
-            create_word_report(data, sheet_output)
-            outputs.append(sheet_output)
-            n_q = len(data["survey_questions"])
-            n_resp = len(parse_open_responses(data["open_responses"]))
-            print(f"     ├─ {n_q} câu, {n_resp} ý kiến, {data['meta'].get('tong_so_sv', 0)} SV")
+            data, out_name = all_data[0], clean_basename
         else:
-            # Gộp các sheet thành 1 sheet trước
-            merged = merge_sheets_data(all_data)
-            if merged:
-                # Tính tổng số sinh viên của bản gộp
-                total_tong_sv = 0
-                has_any_tong_sv = False
-                for d in all_data:
-                    sv = d["meta"].get("tong_so_sv", None) # Đây là các F5 do apply_filename_suffix=False
-                    if sv is not None:
-                        total_tong_sv += sv
-                        has_any_tong_sv = True
+            data, out_name = merge_sheets_data(all_data), f"{clean_basename} (gộp)"
+            if not data:
+                result.error = "Không gộp được dữ liệu các sheet"
+                return result
 
-                total_phieu = merged["survey_questions"][0].get("total", 0) if merged["survey_questions"] else 0
-                if sv_khong_khao_sat is not None:
-                    merged["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
-                elif has_any_tong_sv:
-                    merged["meta"]["tong_so_sv"] = total_tong_sv
-                else:
-                    merged["meta"]["tong_so_sv"] = None
-                    merged["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống ở tất cả các sheet!")
+        total = _resolve_total_students(data, all_data, _absent_count_from_name(basename))
+        data["meta"]["tong_so_sv"] = total
+        if total is None:
+            result.missing_total = True
+            result.error = ("Không xác định được Tổng số SV — hãy ghi số SV không tham gia "
+                            "ở cuối tên file hoặc điền vào ô F5")
+            return result
 
-                if merged["meta"].get("tong_so_sv") is None:
-                    print(f"     ├─ ❌ Không xác định được Tổng số SV cho file gộp (ô F5 và tên file đều trống)!")
-                    return None
+        os.makedirs(out_dir, exist_ok=True)
+        output_path = os.path.join(out_dir, f"{out_name}.docx")
+        try:
+            create_word_report(data, output_path)
+        except PermissionError:
+            result.error = (f"Không ghi được “{os.path.basename(output_path)}” — "
+                            "file đang mở trong Word? Hãy đóng file rồi chạy lại")
+            return result
+        result.warnings = [w for w in data.get("warnings", []) if "F5" not in w]
 
-                sheet_output = os.path.join(out_dir, f"{final_basename}.docx")
-                create_word_report(merged, sheet_output)
-                outputs.append(sheet_output)
-                
-                n_q = len(merged["survey_questions"])
-                total_sv = merged["meta"].get("tong_so_sv", 0)
-                print(f"     ├─ 📊 ĐÃ GỘP: {len(all_data)} sheets, {n_q} câu, {total_sv} SV")
-        
-        if outputs:
-            log.info("Hoàn tất tạo %d file Word cho %s", len(outputs), os.path.basename(input_path))
-            print(f"     └─ ✅ Tạo {len(outputs)} file thành công")
-            return outputs
-        else:
-            return None
-    
+        result.output_path = output_path
+        result.total_students = total
+        result.n_questions = len(data["survey_questions"])
+        result.n_responses = len(parse_open_responses(data.get("open_responses", "")))
+        log.info("Đã tạo %s từ %s", os.path.basename(output_path), os.path.basename(input_path))
     except Exception as e:
-        log.error("Lỗi khi xử lý file %s: %s", input_path, e)
-        print(f"     └─ ❌ Lỗi: {e}")
-        import traceback
-        traceback.print_exc()
+        log.exception("Lỗi khi xử lý file %s", input_path)
+        result.error = str(e)
+    return result
+
+
+def process_file(input_path, output_dir=None):
+    """CLI: xử lý 1 file Excel → Word, in tiến trình ra console.
+    Trả về danh sách file Word đã tạo, hoặc None nếu thất bại."""
+    print(f"  📄 Đang xử lý: {os.path.basename(input_path)}")
+    result = generate_report(input_path, output_dir,
+                             on_progress=lambda msg: print(f"     ├─ ⏭ {msg}"))
+    if not result.ok:
+        print(f"     └─ ❌ {result.error}")
         return None
+    prefix = f"📊 ĐÃ GỘP {result.n_sheets} sheets, " if result.merged else ""
+    print(f"     ├─ {prefix}{result.n_questions} câu, {result.n_responses} ý kiến, "
+          f"{result.total_students} SV")
+    for w in result.warnings:
+        print(f"     ├─ ⚠️ {w}")
+    print(f"     └─ ✅ {os.path.basename(result.output_path)}")
+    return [result.output_path]
 
 
 def main():

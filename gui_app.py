@@ -3,55 +3,68 @@
 """
 GUI Tổng hợp Khảo sát Excel → Word.
 
-Giao diện Tkinter gồm 3 tab: Tổng hợp báo cáo, Gộp Feedbacks, Cấu hình.
-Xử lý chạy trên luồng nền để không khóa giao diện.
+Giao diện CustomTkinter (chế độ sáng) gồm thanh điều hướng bên trái
+và 3 trang: Tổng hợp báo cáo, Gộp Feedbacks, Cấu hình.
+Xử lý chạy trên luồng nền; luồng nền chỉ gửi cập nhật qua hàng đợi để
+luồng giao diện tự vẽ lại (Tkinter không an toàn đa luồng).
 """
 
-import sys
-import os
-import re
-import threading
 import glob
 import json
+import os
+import queue
+import re
+import subprocess
+import sys
+import threading
+import time
+import traceback
 from datetime import datetime
 from pathlib import Path
+from tkinter import filedialog, messagebox
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import traceback
+
+
+def _fatal(title, detail):
+    """Hiện lỗi khởi động bằng messagebox và ghi crash_error.txt cạnh thư mục home."""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(title, detail)
+        root.destroy()
+    except Exception:
+        pass
+    try:
+        (Path.home() / "dbcl_tonghop_crash.txt").write_text(detail, encoding="utf-8")
+    except Exception:
+        pass
+
 
 try:
-    from excel_to_word import (
-        extract_data_from_excel,
-        create_word_report,
-        merge_sheets_data,
-        parse_open_responses,
-        get_sheet_count,
-    )
+    import customtkinter as ctk
+    import excel_to_word as e2w
     from merge_feedbacks import merge_feedbacks
-    from app_logging import get_logger
+    from app_logging import get_logger, get_log_dir
     import benchmark
-except Exception as e:
-    # Initialize a temporary tkinter root to show messagebox
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror(
-        "Lỗi Khởi động",
-        f"Không thể khởi động ứng dụng do lỗi import/khởi tạo:\n\n{traceback.format_exc()}"
-    )
-    with open("crash_error.txt", "w", encoding="utf-8") as f:
-        traceback.print_exc(file=f)
+except Exception:
+    _fatal("Lỗi khởi động",
+           f"Không thể khởi động ứng dụng do lỗi import:\n\n{traceback.format_exc()}")
     sys.exit(1)
 
 try:
     _LOG = get_logger()
-except Exception as e:
+except Exception:
     _LOG = None
 
+APP_NAME = "Tổng hợp Khảo sát"
+APP_VERSION = "3.0.0"
+
 # ═══════════════════════════════════════════════════════════════
-# SETTINGS PERSISTENCE
+# SETTINGS PERSISTENCE (dùng chung file với excel_to_word.CONFIG)
 # ═══════════════════════════════════════════════════════════════
 
-SETTINGS_FILE = Path.home() / ".dbcl_tonghop_settings.json"
+SETTINGS_FILE = e2w.SETTINGS_FILE
+
 
 def load_settings():
     try:
@@ -61,45 +74,67 @@ def load_settings():
         pass
     return {}
 
+
 def save_settings(data: dict):
     try:
         SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
 
+
+def resource_path(rel):
+    """Đường dẫn tài nguyên, chạy được cả khi đóng gói bằng PyInstaller."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
+def open_path(path):
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
 # ═══════════════════════════════════════════════════════════════
-# THEME
+# THEME — giao diện sáng
 # ═══════════════════════════════════════════════════════════════
 
 C = {
-    "bg":           "#16172b",
-    "bg_card":      "#1e2040",
-    "bg_input":     "#252849",
-    "bg_row_even":  "#1e2040",
-    "bg_row_odd":   "#232548",
-    "accent":       "#6c63ff",
-    "accent2":      "#4ade80",
-    "accent3":      "#f59e0b",
-    "text":         "#e2e8f0",
-    "text_dim":     "#64748b",
-    "text_bright":  "#ffffff",
-    "border":       "#2e3260",
-    "success":      "#10b981",
-    "warning":      "#f59e0b",
-    "error":        "#ef4444",
-    "log_bg":       "#0f1020",
-    "tag_success":  "#4ade80",
-    "tag_error":    "#f87171",
-    "tag_warn":     "#fbbf24",
-    "tag_info":     "#818cf8",
-    "tag_dim":      "#475569",
+    "bg":          "#f4f5fb",
+    "sidebar":     "#ffffff",
+    "card":        "#ffffff",
+    "card_alt":    "#f7f8fc",
+    "border":      "#e4e6f0",
+    "text":        "#1e2033",
+    "muted":       "#6b7085",
+    "accent":      "#4f46e5",
+    "accent_hover": "#4338ca",
+    "accent_soft": "#eef0ff",
+    "green":       "#059669",
+    "green_hover": "#047857",
+    "danger":      "#dc2626",
+    "danger_soft": "#fdecec",
+    "neutral_btn": "#eef0f6",
+    "neutral_hover": "#e2e5ef",
+    "log_bg":      "#fafbff",
 }
 
-def _pick_font(candidates, fallback):
-    """Chọn font đầu tiên có sẵn trên hệ thống để giao diện đồng nhất đa nền tảng."""
+# Màu chữ nhật ký theo mức độ.
+LOG_TAGS = {
+    "success": "#16a34a",
+    "error":   "#e5484d",
+    "warning": "#d97706",
+    "info":    "#6366f1",
+    "dim":     "#8a8fa3",
+}
+
+
+def pick_font(root, candidates, fallback):
     try:
-        from tkinter import font as _tkfont
-        available = {f.lower() for f in _tkfont.families()}
+        from tkinter import font as tkfont
+        available = {f.lower() for f in tkfont.families(root)}
         for name in candidates:
             if name.lower() in available:
                 return name
@@ -108,198 +143,205 @@ def _pick_font(candidates, fallback):
     return fallback
 
 
-# Font giao diện và font monospace cho nhật ký, chọn theo nền tảng.
-if sys.platform == "darwin":
-    FF = _pick_font(["SF Pro Text", "Helvetica Neue", "Segoe UI"], "Helvetica")
-    FFM = _pick_font(["SF Mono", "Menlo", "Consolas"], "Courier")
-elif sys.platform == "win32":
-    FF = _pick_font(["Segoe UI", "Calibri"], "Arial")
-    FFM = _pick_font(["Consolas", "Cascadia Mono"], "Courier New")
-else:
-    FF = _pick_font(["Ubuntu", "Noto Sans", "DejaVu Sans", "Segoe UI"], "TkDefaultFont")
-    FFM = _pick_font(["Ubuntu Mono", "DejaVu Sans Mono", "Consolas"], "TkFixedFont")
+class Fonts:
+    """Font chọn theo nền tảng (khởi tạo sau khi có cửa sổ gốc)."""
+    ui = "TkDefaultFont"
+    mono = "TkFixedFont"
+
+    @classmethod
+    def init(cls, root):
+        if sys.platform == "darwin":
+            cls.ui = pick_font(root, ["SF Pro Text", "Helvetica Neue"], "Helvetica")
+            cls.mono = pick_font(root, ["SF Mono", "Menlo"], "Courier")
+        elif sys.platform == "win32":
+            cls.ui = pick_font(root, ["Segoe UI Variable Text", "Segoe UI"], "Arial")
+            cls.mono = pick_font(root, ["Cascadia Mono", "Consolas"], "Courier New")
+        else:
+            cls.ui = pick_font(root, ["Inter", "Ubuntu", "Noto Sans", "DejaVu Sans"], "TkDefaultFont")
+            cls.mono = pick_font(root, ["JetBrains Mono", "Ubuntu Mono", "DejaVu Sans Mono"], "TkFixedFont")
+
+
+def F(size=13, weight="normal"):
+    return ctk.CTkFont(family=Fonts.ui, size=size, weight=weight)
+
+
+def card(parent, **kwargs):
+    return ctk.CTkFrame(parent, fg_color=C["card"], corner_radius=14,
+                        border_width=1, border_color=C["border"], **kwargs)
+
+
+def section_title(parent, text, subtitle=None):
+    box = ctk.CTkFrame(parent, fg_color="transparent")
+    ctk.CTkLabel(box, text=text, font=F(14, "bold"), text_color=C["text"],
+                 anchor="w").pack(anchor="w")
+    if subtitle:
+        ctk.CTkLabel(box, text=subtitle, font=F(12), text_color=C["muted"],
+                     anchor="w", justify="left").pack(anchor="w")
+    return box
+
+
+def button(parent, text, command, kind="neutral", **kwargs):
+    styles = {
+        "primary": dict(fg_color=C["accent"], hover_color=C["accent_hover"], text_color="#ffffff"),
+        "green":   dict(fg_color=C["green"], hover_color=C["green_hover"], text_color="#ffffff"),
+        "neutral": dict(fg_color=C["neutral_btn"], hover_color=C["neutral_hover"], text_color=C["text"]),
+        "ghost":   dict(fg_color="transparent", hover_color=C["neutral_btn"], text_color=C["muted"]),
+    }
+    big = kind in ("primary", "green")
+    opts = dict(height=40 if big else 34, corner_radius=10,
+                font=F(14 if big else 13, "bold" if big else "normal"))
+    opts.update(styles[kind])
+    opts.update(kwargs)
+    return ctk.CTkButton(parent, text=text, command=command, **opts)
+
+
+def human_size(n):
+    if n >= 1024 * 1024:
+        return f"{n / 1024 / 1024:.1f} MB"
+    if n >= 1024:
+        return f"{n // 1024} KB"
+    return f"{n} B"
+
+
+def shorten(text, limit=44):
+    if len(text) <= limit:
+        return text
+    half = (limit - 1) // 2
+    return text[:half] + "…" + text[-half:]
 
 
 # ═══════════════════════════════════════════════════════════════
-# FILE LIST WIDGET
+# WIDGETS
 # ═══════════════════════════════════════════════════════════════
 
-class FileListWidget(tk.Frame):
-    """Danh sách file với nút xóa từng dòng và đếm file."""
+class FileList(ctk.CTkFrame):
+    """Danh sách file Excel: thêm file/thư mục, xóa từng dòng, đếm file."""
 
-    def __init__(self, parent, on_change=None, **kwargs):
-        super().__init__(parent, bg=C["bg_card"], **kwargs)
+    EXTENSIONS = ("*.xls", "*.xlsx")
+
+    def __init__(self, parent, on_change=None):
+        super().__init__(parent, fg_color="transparent")
         self._files = []
         self._on_change = on_change
-        self._build()
 
-    def _build(self):
-        # Toolbar
-        bar = tk.Frame(self, bg=C["bg_card"])
-        bar.pack(fill="x", pady=(0, 6))
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", pady=(0, 10))
+        button(bar, "＋  Thêm file", self._add_files, width=120).pack(side="left")
+        button(bar, "📁  Thêm thư mục", self._add_folder, width=140).pack(side="left", padx=(8, 0))
+        self._clear_btn = button(bar, "Xóa tất cả", self.clear, kind="ghost", width=90)
+        self._clear_btn.pack(side="right")
 
-        self._btn_add = self._btn(bar, "➕ Thêm file", self._add_files, C["accent"])
-        self._btn_add.pack(side="left")
-        self._btn_folder = self._btn(bar, "📁 Thư mục", self._add_folder, C["bg_input"])
-        self._btn_folder.pack(side="left", padx=(6, 0))
-        self._btn_clear = self._btn(bar, "🗑 Xóa tất cả", self._clear_all, C["bg_input"])
-        self._btn_clear.pack(side="left", padx=(6, 0))
+        self._list = ctk.CTkScrollableFrame(self, fg_color=C["card_alt"], corner_radius=10,
+                                            border_width=1, border_color=C["border"])
+        self._list.pack(fill="both", expand=True)
+        self._list.grid_columnconfigure(0, weight=1)
 
-        self._count_lbl = tk.Label(bar, text="Chưa có file", font=(FF, 9),
-                                   bg=C["bg_card"], fg=C["text_dim"])
-        self._count_lbl.pack(side="right")
-
-        # Treeview
-        frame = tk.Frame(self, bg=C["border"], bd=1, relief="flat")
-        frame.pack(fill="both", expand=True)
-
-        cols = ("name", "size")
-        self._tree = ttk.Treeview(frame, columns=cols, show="headings",
-                                  height=5, selectmode="extended")
-        self._tree.heading("name", text="Tên file")
-        self._tree.heading("size", text="Kích thước")
-        self._tree.column("name", width=380, stretch=True)
-        self._tree.column("size", width=90, anchor="e", stretch=False)
-
-        sb = ttk.Scrollbar(frame, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self._tree.pack(fill="both", expand=True)
-
-        self._tree.bind("<Delete>", lambda e: self._remove_selected())
-        self._tree.bind("<BackSpace>", lambda e: self._remove_selected())
-
-        # Remove selected button
-        bot = tk.Frame(self, bg=C["bg_card"])
-        bot.pack(fill="x", pady=(4, 0))
-        self._btn_remove = self._btn(bot, "✕ Xóa dòng đã chọn", self._remove_selected, C["bg_input"])
-        self._btn_remove.pack(side="left")
-        tk.Label(bot, text="(hoặc nhấn Delete)", font=(FF, 8),
-                 bg=C["bg_card"], fg=C["text_dim"]).pack(side="left", padx=6)
-
-    def _btn(self, parent, text, cmd, bg):
-        b = ttk.Button(parent, text=text, command=cmd)
-        return b
-
-    def _add_files(self):
-        files = filedialog.askopenfilenames(
-            title="Chọn file Excel",
-            filetypes=[("Excel files", "*.xls *.xlsx"), ("All files", "*.*")]
-        )
-        added = 0
-        for f in files:
-            if f not in self._files:
-                self._files.append(f)
-                added += 1
-        if added:
-            self._refresh()
-
-    def _add_folder(self):
-        folder = filedialog.askdirectory(title="Chọn thư mục chứa file Excel")
-        if folder:
-            added = 0
-            for ext in ("*.xls", "*.xlsx"):
-                for f in sorted(glob.glob(os.path.join(folder, ext))):
-                    if f not in self._files:
-                        self._files.append(f)
-                        added += 1
-            if added:
-                self._refresh()
-
-    def _remove_selected(self):
-        selected = self._tree.selection()
-        if not selected:
-            return
-        indices = sorted([self._tree.index(s) for s in selected], reverse=True)
-        for i in indices:
-            if 0 <= i < len(self._files):
-                del self._files[i]
-        self._refresh()
-
-    def _clear_all(self):
-        self._files.clear()
-        self._refresh()
-
-    def _refresh(self):
-        self._tree.delete(*self._tree.get_children())
-        for f in self._files:
-            size = os.path.getsize(f) if os.path.exists(f) else 0
-            size_str = f"{size // 1024} KB" if size >= 1024 else f"{size} B"
-            self._tree.insert("", "end", values=(os.path.basename(f), size_str))
-        n = len(self._files)
-        if n == 0:
-            self._count_lbl.config(text="Chưa có file", fg=C["text_dim"])
-        else:
-            self._count_lbl.config(text=f"📄 {n} file đã chọn", fg=C["accent"])
-        if self._on_change:
-            self._on_change(n)
+        self._count = ctk.CTkLabel(self, text="", font=F(12), text_color=C["muted"], anchor="w")
+        self._count.pack(fill="x", pady=(8, 0))
+        self._render(notify=False)
 
     @property
     def files(self):
         return list(self._files)
 
+    def _add(self, paths):
+        new = [p for p in paths if p not in self._files]
+        if new:
+            self._files.extend(new)
+            self._render()
 
-# ═══════════════════════════════════════════════════════════════
-# LOG WIDGET
-# ═══════════════════════════════════════════════════════════════
+    def _add_files(self):
+        self._add(filedialog.askopenfilenames(
+            title="Chọn file Excel",
+            filetypes=[("Excel", "*.xls *.xlsx"), ("Tất cả", "*.*")]))
 
-class LogWidget(tk.Frame):
-    """Log area với timestamp, màu tag, nút xóa và copy."""
+    def _add_folder(self):
+        folder = filedialog.askdirectory(title="Chọn thư mục chứa file Excel")
+        if folder:
+            found = []
+            for ext in self.EXTENSIONS:
+                found += sorted(glob.glob(os.path.join(folder, ext)))
+            self._add([f for f in found if not os.path.basename(f).startswith("~$")])
 
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, bg=C["bg_card"], **kwargs)
-        self._build()
+    def _remove(self, path):
+        self._files.remove(path)
+        self._render()
 
-    def _build(self):
-        bar = tk.Frame(self, bg=C["bg_card"])
-        bar.pack(fill="x", pady=(0, 4))
-        tk.Label(bar, text="📋 Nhật ký xử lý", font=(FF, 10, "bold"),
-                 bg=C["bg_card"], fg=C["text"]).pack(side="left")
-        ttk.Button(bar, text="🗑 Xóa", command=self.clear, width=8).pack(side="right")
-        ttk.Button(bar, text="📋 Copy", command=self._copy, width=8).pack(side="right", padx=(0, 4))
+    def clear(self):
+        self._files.clear()
+        self._render()
 
-        frame = tk.Frame(self, bg=C["border"], bd=1, relief="flat")
-        frame.pack(fill="both", expand=True)
+    def _render(self, notify=True):
+        for w in self._list.winfo_children():
+            w.destroy()
 
-        self._txt = tk.Text(frame, wrap="word", font=(FFM, 9),
-                            bg=C["log_bg"], fg=C["text"],
-                            insertbackground=C["text"],
-                            selectbackground=C["accent"],
-                            relief="flat", bd=8, state="disabled")
-        sb = ttk.Scrollbar(frame, orient="vertical", command=self._txt.yview)
-        self._txt.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        if not self._files:
+            empty = ctk.CTkFrame(self._list, fg_color="transparent")
+            empty.grid(row=0, column=0, sticky="nsew", pady=36)
+            ctk.CTkLabel(empty, text="📄", font=F(30)).pack()
+            ctk.CTkLabel(empty, text="Chưa có file nào", font=F(14, "bold"),
+                         text_color=C["text"]).pack(pady=(6, 0))
+            ctk.CTkLabel(empty, text="Bấm “Thêm file” hoặc “Thêm thư mục” để chọn file .xls / .xlsx",
+                         font=F(12), text_color=C["muted"]).pack()
+        for i, path in enumerate(self._files):
+            self._row(i, path)
+
+        n = len(self._files)
+        self._count.configure(text=f"{n} file đã chọn" if n else "")
+        self._clear_btn.configure(state="normal" if n else "disabled")
+        if notify and self._on_change:
+            self._on_change(n)
+
+    def _row(self, i, path):
+        row = ctk.CTkFrame(self._list, fg_color=C["card"], corner_radius=8, height=40)
+        row.grid(row=i, column=0, sticky="ew", padx=2, pady=2)
+        row.grid_columnconfigure(1, weight=1)
+
+        ext = os.path.splitext(path)[1].lstrip(".").upper() or "?"
+        ctk.CTkLabel(row, text=ext, width=46, height=24, corner_radius=6,
+                     fg_color=C["accent_soft"], text_color=C["accent"],
+                     font=F(11, "bold")).grid(row=0, column=0, padx=(10, 10), pady=8)
+        ctk.CTkLabel(row, text=shorten(os.path.basename(path)), font=F(13),
+                     text_color=C["text"], anchor="w").grid(row=0, column=1, sticky="ew")
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        ctk.CTkLabel(row, text=human_size(size), font=F(12), text_color=C["muted"],
+                     width=70, anchor="e").grid(row=0, column=2, padx=(8, 4))
+        ctk.CTkButton(row, text="✕", width=28, height=28, corner_radius=6,
+                      fg_color="transparent", hover_color=C["danger_soft"],
+                      text_color=C["muted"], font=F(13),
+                      command=lambda p=path: self._remove(p)).grid(row=0, column=3, padx=(0, 6))
+
+
+class LogView(ctk.CTkFrame):
+    """Nhật ký xử lý có màu theo mức độ, nút sao chép và xóa."""
+
+    def __init__(self, parent):
+        super().__init__(parent, fg_color="transparent")
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", pady=(0, 8))
+        section_title(bar, "Nhật ký xử lý").pack(side="left")
+        button(bar, "Xóa", self.clear, kind="ghost", width=56, height=28).pack(side="right")
+        button(bar, "Sao chép", self._copy, kind="ghost", width=80, height=28).pack(side="right")
+
+        self._txt = ctk.CTkTextbox(self, fg_color=C["log_bg"], text_color=C["text"],
+                                   border_width=1, border_color=C["border"], corner_radius=10,
+                                   font=ctk.CTkFont(family=Fonts.mono, size=12),
+                                   wrap="word", state="disabled")
         self._txt.pack(fill="both", expand=True)
-
-        for tag, fg in [("success", C["tag_success"]), ("error", C["tag_error"]),
-                        ("warning", C["tag_warn"]), ("info", C["tag_info"]),
-                        ("dim", C["tag_dim"])]:
-            self._txt.tag_configure(tag, foreground=fg)
+        for tag, color in LOG_TAGS.items():
+            self._txt.tag_config(tag, foreground=color)
 
     def log(self, msg, tag=None):
-        ts = datetime.now().strftime("%H:%M:%S")
-        if _LOG:
-            clean_msg = msg.strip()
-            if clean_msg and not clean_msg.startswith("═"):
-                if tag == "error":
-                    _LOG.error(clean_msg)
-                elif tag == "warning":
-                    _LOG.warning(clean_msg)
-                elif tag in ("info", "success"):
-                    _LOG.info(clean_msg)
-                else:
-                    _LOG.debug(clean_msg)
-
-        def _do():
-            self._txt.configure(state="normal")
-            self._txt.insert("end", f"[{ts}] ", "dim")
-            if tag:
-                self._txt.insert("end", msg + "\n", tag)
-            else:
-                self._txt.insert("end", msg + "\n")
-            self._txt.see("end")
-            self._txt.configure(state="disabled")
-        self._txt.after(0, _do)
+        """Chỉ gọi từ luồng giao diện."""
+        if _LOG and msg.strip():
+            level = {"error": _LOG.error, "warning": _LOG.warning,
+                     "success": _LOG.info, "info": _LOG.info}.get(tag, _LOG.debug)
+            level(msg.strip())
+        self._txt.configure(state="normal")
+        self._txt.insert("end", datetime.now().strftime("%H:%M:%S  "), "dim")
+        self._txt.insert("end", msg + "\n", tag or ())
+        self._txt.see("end")
+        self._txt.configure(state="disabled")
 
     def clear(self):
         self._txt.configure(state="normal")
@@ -307,798 +349,656 @@ class LogWidget(tk.Frame):
         self._txt.configure(state="disabled")
 
     def _copy(self):
-        content = self._txt.get("1.0", "end").strip()
-        self._txt.clipboard_clear()
-        self._txt.clipboard_append(content)
+        self.clipboard_clear()
+        self.clipboard_append(self._txt.get("1.0", "end").strip())
+
+
+class StatTile(ctk.CTkFrame):
+    def __init__(self, parent, label, color):
+        super().__init__(parent, fg_color=C["card_alt"], corner_radius=10)
+        self._value = ctk.CTkLabel(self, text="–", font=F(22, "bold"), text_color=color)
+        self._value.pack(anchor="w", padx=14, pady=(10, 0))
+        ctk.CTkLabel(self, text=label, font=F(12), text_color=C["muted"]).pack(
+            anchor="w", padx=14, pady=(0, 10))
+
+    def set(self, value):
+        self._value.configure(text=str(value))
 
 
 # ═══════════════════════════════════════════════════════════════
-# OUTPUT DIR ROW
+# PAGES
 # ═══════════════════════════════════════════════════════════════
 
-class OutputDirRow(tk.Frame):
-    def __init__(self, parent, var: tk.StringVar, **kwargs):
-        super().__init__(parent, bg=C["bg_card"], **kwargs)
-        self._var = var
-        self._build()
+class ToolPage(ctk.CTkFrame):
+    """Khung chung cho trang xử lý: chọn file, thư mục kết quả, chạy, nhật ký."""
 
-    def _build(self):
-        tk.Label(self, text="📂 Thư mục kết quả:", font=(FF, 10, "bold"),
-                 bg=C["bg_card"], fg=C["text"]).pack(anchor="w", pady=(0, 4))
-        row = tk.Frame(self, bg=C["bg_card"])
-        row.pack(fill="x")
-        entry = tk.Entry(row, textvariable=self._var, font=(FF, 10),
-                         bg=C["bg_input"], fg=C["text"],
-                         insertbackground=C["text"], relief="flat", bd=0)
-        entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
-        ttk.Button(row, text="Chọn...", command=self._choose, width=10).pack(side="right")
+    TITLE = ""
+    SUBTITLE = ""
+    RUN_TEXT = "Bắt đầu"
+    RUN_KIND = "primary"
+    OUTDIR_KEY = ""
+    STAT_LABELS = ("Tổng file", "Thành công", "Lỗi")
 
-    def _choose(self):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        self._busy = False
+        self.outdir = tk.StringVar(value=app.settings.get(self.OUTDIR_KEY, ""))
+        self.outdir.trace_add("write", lambda *_: app.update_setting(self.OUTDIR_KEY, self.outdir.get()))
+
+        self.grid_columnconfigure(0, weight=5, uniform="col")
+        self.grid_columnconfigure(1, weight=4, uniform="col")
+        self.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
+        ctk.CTkLabel(header, text=self.TITLE, font=F(24, "bold"), text_color=C["text"]).pack(anchor="w")
+        ctk.CTkLabel(header, text=self.SUBTITLE, font=F(13), text_color=C["muted"],
+                     justify="left", anchor="w").pack(anchor="w", pady=(2, 0))
+
+        # ── Cột trái: file đầu vào + thư mục kết quả + nút chạy
+        left = ctk.CTkFrame(self, fg_color="transparent")
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
+        left.grid_rowconfigure(0, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+
+        files_card = card(left)
+        files_card.grid(row=0, column=0, sticky="nsew")
+        section_title(files_card, "File Excel đầu vào").pack(anchor="w", padx=18, pady=(16, 10))
+        self.file_list = FileList(files_card, on_change=self._on_files_changed)
+        self.file_list.pack(fill="both", expand=True, padx=18, pady=(0, 16))
+
+        run_card = card(left)
+        run_card.grid(row=1, column=0, sticky="ew", pady=(16, 0))
+        run_card.grid_columnconfigure(0, weight=1)
+        section_title(run_card, "Thư mục lưu kết quả",
+                      "Để trống để lưu vào thư mục “output” cạnh file Excel đầu tiên").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 8))
+        ctk.CTkEntry(run_card, textvariable=self.outdir, height=36, corner_radius=8,
+                     border_color=C["border"], fg_color=C["card_alt"], text_color=C["text"],
+                     font=F(13)).grid(row=1, column=0, sticky="ew", padx=(18, 8))
+        button(run_card, "Chọn…", self._choose_outdir, width=80).grid(row=1, column=1, padx=(0, 18))
+
+        actions = ctk.CTkFrame(run_card, fg_color="transparent")
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(14, 4))
+        self.run_btn = button(actions, self.RUN_TEXT, self._start, kind=self.RUN_KIND, width=200)
+        self.run_btn.pack(side="left")
+        button(actions, "📂  Mở thư mục kết quả", self._open_outdir).pack(side="left", padx=(10, 0))
+
+        self.progress = ctk.CTkProgressBar(run_card, height=8, corner_radius=4,
+                                           progress_color=C["accent"] if self.RUN_KIND == "primary" else C["green"],
+                                           fg_color=C["neutral_btn"])
+        self.progress.set(0)
+        self.progress.grid(row=3, column=0, columnspan=2, sticky="ew", padx=18, pady=(12, 4))
+        self.progress_lbl = ctk.CTkLabel(run_card, text="Sẵn sàng", font=F(12),
+                                         text_color=C["muted"], anchor="w")
+        self.progress_lbl.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 14))
+
+        # ── Cột phải: thống kê + nhật ký
+        right = card(self)
+        right.grid(row=1, column=1, sticky="nsew")
+        stats = ctk.CTkFrame(right, fg_color="transparent")
+        stats.pack(fill="x", padx=18, pady=(16, 0))
+        colors = (C["text"], C["green"], C["danger"])
+        self.stats = []
+        for i, (label, color) in enumerate(zip(self.STAT_LABELS, colors)):
+            stats.grid_columnconfigure(i, weight=1, uniform="stat")
+            tile = StatTile(stats, label, color)
+            tile.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
+            self.stats.append(tile)
+        self.log = LogView(right)
+        self.log.pack(fill="both", expand=True, padx=18, pady=16)
+
+    # ── Hành động ───────────────────────────────────────────────
+
+    def _on_files_changed(self, n):
+        if not self._busy:
+            self.stats[0].set(n or "–")
+            self.app.set_status(f"{n} file đã chọn" if n else "Sẵn sàng")
+
+    def _choose_outdir(self):
         folder = filedialog.askdirectory(title="Chọn thư mục lưu kết quả")
         if folder:
-            self._var.set(folder)
+            self.outdir.set(folder)
+
+    def _open_outdir(self):
+        path = self.outdir.get().strip()
+        if path and os.path.isdir(path):
+            open_path(path)
+        else:
+            messagebox.showinfo("Thông báo", "Thư mục kết quả chưa tồn tại — hãy chạy xử lý trước.")
+
+    def _start(self):
+        files = self.file_list.files
+        if not files:
+            messagebox.showwarning("Chưa có file", "Vui lòng thêm file Excel trước khi xử lý.")
+            return
+        out_dir = self.outdir.get().strip()
+        if not out_dir:
+            out_dir = os.path.join(os.path.dirname(files[0]), "output")
+            self.outdir.set(out_dir)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as e:
+            messagebox.showerror("Lỗi thư mục", f"Không tạo được thư mục kết quả:\n{e}")
+            return
+
+        self._busy = True
+        self.run_btn.configure(state="disabled", text="Đang xử lý…")
+        self.log.clear()
+        self.progress.set(0)
+        self.stats[0].set(len(files))
+        self.stats[1].set(0)
+        self.stats[2].set(0)
+        threading.Thread(target=self._run_safe, args=(files, out_dir), daemon=True).start()
+
+    def _run_safe(self, files, out_dir):
+        try:
+            self.run(files, out_dir)
+        except Exception as e:
+            self.post_log(f"❌ Lỗi không mong muốn: {e}", "error")
+            if _LOG:
+                _LOG.exception("Lỗi luồng xử lý")
+        finally:
+            self.app.post(self._finish)
+
+    def _finish(self):
+        self._busy = False
+        self.run_btn.configure(state="normal", text=self.RUN_TEXT)
+
+    # ── Cập nhật giao diện từ luồng nền ─────────────────────────
+
+    def post_log(self, msg, tag=None):
+        self.app.post(lambda: self.log.log(msg, tag))
+
+    def post_progress(self, fraction, text):
+        def _do():
+            self.progress.set(fraction)
+            self.progress_lbl.configure(text=text)
+        self.app.post(_do)
+
+    def post_stat(self, index, value):
+        self.app.post(lambda: self.stats[index].set(value))
+
+    def run(self, files, out_dir):
+        raise NotImplementedError
+
+
+class ReportPage(ToolPage):
+    TITLE = "Tổng hợp báo cáo"
+    SUBTITLE = ("Chuyển file kết quả khảo sát Excel thành báo cáo Word theo mẫu. "
+                "File nhiều sheet được tự động gộp thành một báo cáo.")
+    RUN_TEXT = "▶   Tạo báo cáo"
+    OUTDIR_KEY = "outdir1"
+
+    def run(self, files, out_dir):
+        total, ok, failed = len(files), 0, 0
+        missing_total = []
+        started = time.perf_counter()
+        self.post_log(f"Bắt đầu xử lý {total} file → {out_dir}", "info")
+
+        for i, path in enumerate(files):
+            name = os.path.basename(path)
+            self.post_progress(i / total, f"Đang xử lý {i + 1}/{total}: {shorten(name, 50)}")
+            self.app.post_status(f"Đang xử lý file {i + 1}/{total}…")
+            self.post_log("")
+            self.post_log(f"📄 {name}", "info")
+
+            result = e2w.generate_report(path, out_dir,
+                                         on_progress=lambda m: self.post_log(f"   ⏭ {m}", "dim"))
+            if result.ok:
+                ok += 1
+                merged = f"gộp {result.n_sheets} sheet, " if result.merged else ""
+                self.post_log(f"   ✅ {merged}{result.n_questions} câu, {result.n_responses} ý kiến, "
+                              f"{result.total_students} SV → {os.path.basename(result.output_path)}",
+                              "success")
+                for w in result.warnings:
+                    self.post_log(f"   ⚠️ {w}", "warning")
+            else:
+                failed += 1
+                self.post_log(f"   ❌ {result.error}", "error")
+                if result.missing_total:
+                    missing_total.append(name)
+            self.post_stat(1, ok)
+            self.post_stat(2, failed)
+
+        elapsed = time.perf_counter() - started
+        self.post_progress(1, f"Hoàn tất • {ok}/{total} file trong {elapsed:.1f} giây")
+        self.post_log("")
+        self.post_log(f"Hoàn tất: {ok} thành công, {failed} lỗi", "success" if not failed else "warning")
+        if ok:
+            self.post_log("Hiệu quả ước lượng so với làm thủ công:", "info")
+            for line in benchmark.build_result(n_reports=ok, auto_seconds=elapsed).summary_lines():
+                self.post_log(f"   • {line}", "dim")
+        self.app.post_status(f"Hoàn tất • {ok} báo cáo đã tạo • {out_dir}")
+
+        if missing_total:
+            names = "\n".join(f"• {n}" for n in missing_total)
+            self.app.post(lambda: messagebox.showwarning(
+                "Thiếu thông tin Tổng số SV",
+                f"Không xác định được Tổng số SV cho:\n\n{names}\n\n"
+                "Hãy ghi số SV không tham gia ở cuối tên file (vd: “… HKI 3.xls”) "
+                "hoặc điền vào ô F5 trong Excel rồi thử lại."))
+
+
+class FeedbackPage(ToolPage):
+    TITLE = "Gộp Feedbacks"
+    SUBTITLE = ("Gom ý kiến đóng góp mở từ nhiều file khảo sát, làm sạch, loại trùng, "
+                "phân loại theo chủ đề và xuất ra Feedbacks.docx.")
+    RUN_TEXT = "💬   Gộp Feedbacks"
+    RUN_KIND = "green"
+    OUTDIR_KEY = "outdir2"
+
+    def run(self, files, out_dir):
+        self.post_log(f"Bắt đầu gộp feedbacks từ {len(files)} file", "info")
+        for f in files:
+            self.post_log(f"📄 {os.path.basename(f)}", "dim")
+        self.post_progress(0.3, "Đang đọc dữ liệu…")
+        self.app.post_status("Đang tổng hợp feedbacks…")
+
+        output_path = merge_feedbacks(files, out_dir)
+        if output_path:
+            self.post_stat(1, len(files))
+            self.post_progress(1, "Hoàn tất")
+            self.post_log("")
+            self.post_log(f"✅ Đã tạo {os.path.basename(output_path)}", "success")
+            self.app.post_status(f"Hoàn tất • {output_path}")
+        else:
+            self.post_stat(2, len(files))
+            self.post_progress(0, "Không có dữ liệu")
+            self.post_log("⚠️ Không tìm thấy ý kiến hợp lệ nào trong các file đã chọn", "warning")
+            self.app.post_status("Không có dữ liệu feedback")
+
+
+class SettingsPage(ctk.CTkFrame):
+    """Cấu hình định dạng Word và bộ lọc feedback (lưu vào SETTINGS_FILE)."""
+
+    WORD_FIELDS = [
+        ("university_name", "Tên trường"),
+        ("faculty_name", "Tên khoa / đơn vị"),
+        ("country_header", "Quốc hiệu"),
+        ("country_slogan", "Tiêu ngữ"),
+        ("report_title", "Tiêu đề báo cáo (mỗi dòng một hàng; {ten_mon} = tên học phần)"),
+        ("signer_title", "Chức danh ký tên cuối báo cáo"),
+        ("section_layouts", "Nhóm tiêu chí trong bảng kết quả"),
+    ]
+    NUMBER_FIELDS = [
+        ("font_size", "Cỡ chữ (pt)", int),
+        ("margin_left", "Lề trái (cm)", float),
+        ("margin_right", "Lề phải (cm)", float),
+        ("margin_top", "Lề trên (cm)", float),
+        ("margin_bottom", "Lề dưới (cm)", float),
+        ("open_response_lines", "Dòng trống ý kiến", int),
+    ]
+    FONTS = ["Times New Roman", "Arial", "Calibri", "Segoe UI"]
+
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        self._widgets = {}
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        ctk.CTkLabel(header, text="Cấu hình", font=F(24, "bold"), text_color=C["text"]).pack(side="left")
+        button(header, "💾  Lưu cấu hình", self._save, kind="primary", width=150).pack(side="right")
+        button(header, "Khôi phục mặc định", self._reset).pack(side="right", padx=(0, 10))
+
+        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+
+        # ── Định dạng Word
+        c1 = card(body)
+        c1.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        section_title(c1, "Định dạng file Word",
+                      "Thông tin đầu trang và định dạng của báo cáo xuất ra").pack(
+            anchor="w", padx=20, pady=(18, 12))
+        form = ctk.CTkFrame(c1, fg_color="transparent")
+        form.pack(fill="x", padx=20, pady=(0, 20))
+        form.grid_columnconfigure((0, 1), weight=1, uniform="f")
+
+        # (khóa, hàng, cột, số cột chiếm, số dòng textbox — 0 là ô nhập 1 dòng)
+        layout = [
+            ("university_name", 0, 0, 1, 2), ("faculty_name", 0, 1, 1, 0),
+            ("country_header", 1, 0, 1, 0), ("country_slogan", 1, 1, 1, 0),
+            ("report_title", 2, 0, 2, 3),
+        ]
+        labels = {key: label for key, label in self.WORD_FIELDS}
+        for key, row, col, span, lines in layout:
+            cell = self._field(form, labels[key])
+            cell.grid(row=row, column=col, columnspan=span, sticky="new",
+                      padx=(0, 12 if col == 0 and span == 1 else 0), pady=6)
+            self._widgets[key] = self._textbox(cell, lines) if lines else self._entry(cell)
+        r = 3
+        font_cell = self._field(form, "Font chữ")
+        font_cell.grid(row=r, column=0, sticky="ew", padx=(0, 12), pady=6)
+        self._font_var = tk.StringVar()
+        ctk.CTkOptionMenu(font_cell, variable=self._font_var, values=self.FONTS, height=36,
+                          corner_radius=8, fg_color=C["card_alt"], button_color=C["accent"],
+                          button_hover_color=C["accent_hover"], text_color=C["text"],
+                          font=F(13), dropdown_font=F(13)).pack(fill="x")
+        color_cell = self._field(form, "Màu nền tiêu đề bảng (HEX)")
+        color_cell.grid(row=r, column=1, sticky="ew", pady=6)
+        self._widgets["table_header_bg"] = self._entry(color_cell)
+
+        nums = ctk.CTkFrame(form, fg_color="transparent")
+        nums.grid(row=r + 1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        for i, (key, label, _) in enumerate(self.NUMBER_FIELDS):
+            nums.grid_columnconfigure(i, weight=1, uniform="n")
+            cell = self._field(nums, label)
+            cell.grid(row=0, column=i, sticky="ew", padx=(0, 0 if i == len(self.NUMBER_FIELDS) - 1 else 10))
+            self._widgets[key] = self._entry(cell)
+
+        # ── Bảng kết quả & ký tên
+        c3 = card(body)
+        c3.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        section_title(c3, "Bảng kết quả & chữ ký",
+                      "Nhóm tiêu chí: mỗi dòng “Tên nhóm | từ-đến” theo số câu (8.1, 8.2 tính là câu 8). "
+                      "Mỗi mẫu phiếu là một khối, cách nhau một dòng trống;\nphần mềm tự chọn khối có "
+                      "số câu cuối trùng với file Excel.").pack(anchor="w", padx=20, pady=(18, 12))
+        form3 = ctk.CTkFrame(c3, fg_color="transparent")
+        form3.pack(fill="x", padx=20, pady=(0, 20))
+        form3.grid_columnconfigure(0, weight=1)
+        labels3 = dict(self.WORD_FIELDS)
+        cell = self._field(form3, labels3["section_layouts"])
+        cell.grid(row=0, column=0, sticky="ew", pady=6)
+        self._widgets["section_layouts"] = self._textbox(cell, 9)
+        cell = self._field(form3, labels3["signer_title"])
+        cell.grid(row=1, column=0, sticky="ew", pady=6)
+        self._widgets["signer_title"] = self._entry(cell)
+
+        # ── Bộ lọc feedback
+        c2 = card(body)
+        c2.grid(row=2, column=0, sticky="ew", pady=(0, 16))
+        section_title(c2, "Bộ lọc Feedback",
+                      "Cách nhận diện cột ý kiến và loại bỏ các câu trả lời vô nghĩa").pack(
+            anchor="w", padx=20, pady=(18, 12))
+        form2 = ctk.CTkFrame(c2, fg_color="transparent")
+        form2.pack(fill="x", padx=20, pady=(0, 20))
+        form2.grid_columnconfigure(0, weight=1)
+        for row, (key, label, hint, height) in enumerate([
+            ("search_keywords", "Từ khóa tìm cột feedback",
+             "Cách nhau bằng dấu phẩy — vd: ý kiến đóng góp, feedback, nhận xét", 0),
+            ("skip_keywords", "Từ khóa bỏ qua",
+             "Cách nhau bằng dấu phẩy — loại phản hồi trùng khớp hoàn toàn", 0),
+            ("skip_patterns", "Biểu thức chính quy bỏ qua",
+             "Mỗi dòng một regex — loại phản hồi khớp mẫu", 4),
+        ]):
+            cell = self._field(form2, label, hint)
+            cell.grid(row=row, column=0, sticky="ew", pady=6)
+            self._widgets[key] = self._textbox(cell, height) if height else self._entry(cell)
+
+        self.load()
+
+    # ── Factory ─────────────────────────────────────────────────
+
+    def _field(self, parent, label, hint=None):
+        cell = ctk.CTkFrame(parent, fg_color="transparent")
+        ctk.CTkLabel(cell, text=label, font=F(12, "bold"), text_color=C["text"],
+                     anchor="w").pack(anchor="w", pady=(0, 4))
+        if hint:
+            ctk.CTkLabel(cell, text=hint, font=F(11), text_color=C["muted"],
+                         anchor="w").pack(anchor="w", pady=(0, 4))
+        return cell
+
+    def _entry(self, parent):
+        e = ctk.CTkEntry(parent, height=36, corner_radius=8, border_color=C["border"],
+                         fg_color=C["card_alt"], text_color=C["text"], font=F(13))
+        e.pack(fill="x")
+        return e
+
+    def _textbox(self, parent, lines):
+        t = ctk.CTkTextbox(parent, height=24 * lines + 14, corner_radius=8, border_width=2,
+                           border_color=C["border"], fg_color=C["card_alt"],
+                           text_color=C["text"], font=F(13))
+        t.pack(fill="x")
+        return t
+
+    # ── Đọc / ghi giá trị ───────────────────────────────────────
+
+    def _set(self, key, value):
+        w = self._widgets[key]
+        if isinstance(w, ctk.CTkTextbox):
+            w.delete("1.0", "end")
+            w.insert("1.0", value)
+        else:
+            w.delete(0, "end")
+            w.insert(0, value)
+
+    def _get(self, key):
+        w = self._widgets[key]
+        if isinstance(w, ctk.CTkTextbox):
+            return w.get("1.0", "end").strip()
+        return w.get().strip()
+
+    def load(self):
+        cfg = e2w.CONFIG
+        self._set("university_name", cfg["university_name"])
+        self._set("faculty_name", cfg["faculty_name"])
+        self._set("country_header", cfg["country_header"])
+        self._set("country_slogan", cfg["country_slogan"])
+        self._set("report_title", "\n".join(cfg["report_title_lines"]))
+        self._set("table_header_bg", cfg["table_header_bg"])
+        self._set("signer_title", cfg["signer_title"])
+        self._set("section_layouts", cfg["section_layouts"])
+        for key, _, _ in self.NUMBER_FIELDS:
+            self._set(key, str(cfg[key]))
+        self._font_var.set(cfg["font_name"])
+        self._set("search_keywords", ", ".join(cfg["feedback_search_keywords"]))
+        self._set("skip_keywords", ", ".join(cfg["feedback_skip_keywords"]))
+        self._set("skip_patterns", "\n".join(cfg["feedback_skip_patterns"]))
+
+    def _save(self):
+        word = {key: self._get(key) for key, _ in self.WORD_FIELDS}
+        word["font_name"] = self._font_var.get()
+        word["table_header_bg"] = self._get("table_header_bg").lstrip("#")
+        if not re.fullmatch(r"[0-9A-Fa-f]{6}", word["table_header_bg"]):
+            messagebox.showerror("Giá trị không hợp lệ",
+                                 "Màu nền tiêu đề bảng phải là mã HEX 6 ký tự, ví dụ D9E2F3.")
+            return
+        try:
+            e2w.parse_section_layouts(word["section_layouts"])
+        except ValueError as e:
+            messagebox.showerror("Nhóm tiêu chí không hợp lệ", str(e))
+            return
+        for key, label, cast in self.NUMBER_FIELDS:
+            try:
+                word[key] = cast(self._get(key).replace(",", "."))
+            except ValueError:
+                messagebox.showerror("Giá trị không hợp lệ", f"“{label}” phải là một số.")
+                return
+        self.app.settings["word_format"] = word
+        self.app.settings["feedback_config"] = {
+            "search_keywords": self._get("search_keywords"),
+            "skip_keywords": self._get("skip_keywords"),
+            "skip_patterns": self._get("skip_patterns"),
+        }
+        save_settings(self.app.settings)
+        e2w.load_settings_into_config()
+        self.load()
+        self.app.set_status("Đã lưu cấu hình")
+        messagebox.showinfo("Đã lưu", "Cấu hình đã được lưu và áp dụng cho các lần xử lý tiếp theo.")
+
+    def _reset(self):
+        if not messagebox.askyesno("Khôi phục mặc định",
+                                   "Khôi phục toàn bộ cấu hình về mặc định của nhà trường?"):
+            return
+        self.app.settings.pop("word_format", None)
+        self.app.settings.pop("feedback_config", None)
+        save_settings(self.app.settings)
+        e2w.load_settings_into_config()
+        self.load()
+        self.app.set_status("Đã khôi phục cấu hình mặc định")
 
 
 # ═══════════════════════════════════════════════════════════════
 # MAIN APP
 # ═══════════════════════════════════════════════════════════════
 
-class App(tk.Tk):
-    APP_VERSION = "v2"
+class App(ctk.CTk):
+    PAGES = [
+        ("report", "📄", "Tổng hợp báo cáo", ReportPage),
+        ("feedback", "💬", "Gộp Feedbacks", FeedbackPage),
+        ("settings", "⚙️", "Cấu hình", SettingsPage),
+    ]
 
     def __init__(self):
-        super().__init__()
-        self._settings = load_settings()
-        
-        # Cấu hình variables cho Word Output
-        self._university_var = tk.StringVar()
-        self._faculty_var = tk.StringVar()
-        self._country_header_var = tk.StringVar()
-        self._country_slogan_var = tk.StringVar()
-        self._font_name_var = tk.StringVar()
-        self._font_size_var = tk.StringVar()
-        self._margin_top_var = tk.StringVar()
-        self._margin_bottom_var = tk.StringVar()
-        self._margin_left_var = tk.StringVar()
-        self._margin_right_var = tk.StringVar()
-        self._table_header_bg_var = tk.StringVar()
-        self._open_response_lines_var = tk.StringVar()
-        
-        # Cấu hình variables cho Feedback Keywords
-        self._feedback_search_keywords_var = tk.StringVar()
-        self._feedback_skip_keywords_var = tk.StringVar()
-        
-        self.title(f"📊 Tổng hợp Khảo sát Excel → Word  ({self.APP_VERSION})")
-        self.geometry("960x840")
-        self.minsize(860, 720)
-        self.configure(bg=C["bg"])
-        self._setup_styles()
-        self._build_ui()
-        self._center_window()
-        self._load_settings_to_ui()
-        # Cho phép mở sẵn một tab khi khởi động (phục vụ chụp ảnh tài liệu).
-        _start_tab = os.environ.get("DBCL_START_TAB")
-        if _start_tab is None and "--tab" in sys.argv:
-            try:
-                _start_tab = sys.argv[sys.argv.index("--tab") + 1]
-            except (ValueError, IndexError):
-                _start_tab = None
-        if _start_tab is not None:
-            try:
-                self._nb.select(int(_start_tab))
-            except Exception:
-                pass
+        self.settings = load_settings()
+        ctk.set_appearance_mode("light")
+        ctk.set_default_color_theme("blue")
+        super().__init__(fg_color=C["bg"])
+        Fonts.init(self)
 
-    def _resource_path(self, rel):
-        try:
-            base = sys._MEIPASS
-        except AttributeError:
-            base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, rel)
+        self._queue = queue.Queue()
+        self.title(f"{APP_NAME} — Excel → Word")
+        self.geometry("1180x760")
+        self.minsize(1000, 660)
+        self._set_icon()
 
-    def _center_window(self):
-        self.update_idletasks()
-        w, h = self.winfo_width(), self.winfo_height()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-w)//2}+{(sh-h)//2}")
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self._build_sidebar()
 
-    def _setup_styles(self):
-        style = ttk.Style(self)
-        style.theme_use("clam")
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.grid(row=0, column=1, sticky="nsew", padx=28, pady=(24, 0))
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(0, weight=1)
+        self._pages = {}
+        for key, _, _, cls in self.PAGES:
+            page = cls(content, self)
+            page.grid(row=0, column=0, sticky="nsew")
+            self._pages[key] = page
 
-        # General
-        style.configure(".", background=C["bg"], foreground=C["text"],
-                        font=(FF, 10), borderwidth=0, focuscolor=C["accent"])
-        style.configure("TFrame", background=C["bg"])
-        style.configure("TLabel", background=C["bg"], foreground=C["text"])
+        self._status = ctk.CTkLabel(self, text="Sẵn sàng", font=F(12), text_color=C["muted"],
+                                    anchor="w")
+        self._status.grid(row=1, column=1, sticky="ew", padx=30, pady=(8, 10))
 
-        # Notebook
-        style.configure("TNotebook", background=C["bg"], borderwidth=0, tabmargins=[0, 0, 0, 0])
-        style.configure("TNotebook.Tab", background=C["bg_input"], foreground=C["text_dim"],
-                        padding=[20, 10], font=(FF, 10), borderwidth=0)
-        style.map("TNotebook.Tab",
-                  background=[("selected", C["accent"]), ("active", C["bg_card"])],
-                  foreground=[("selected", C["text_bright"]), ("active", C["text"])])
+        self._show(self._initial_page())
+        self._center()
+        self.after(50, self._drain_queue)
 
-        # Buttons
-        style.configure("TButton", background=C["bg_input"], foreground=C["text"],
-                        padding=[12, 7], relief="flat", borderwidth=0, font=(FF, 10))
-        style.map("TButton",
-                  background=[("active", C["border"]), ("disabled", C["bg_input"])],
-                  foreground=[("disabled", C["text_dim"])])
-        style.configure("Accent.TButton", background=C["accent"], foreground=C["text_bright"],
-                        padding=[18, 9], font=(FF, 11, "bold"))
-        style.map("Accent.TButton",
-                  background=[("active", "#8b83ff"), ("pressed", "#564fd1"),
-                              ("disabled", C["bg_input"])],
-                  foreground=[("disabled", C["text_dim"])])
-        style.configure("Green.TButton", background=C["success"], foreground=C["text_bright"],
-                        padding=[18, 9], font=(FF, 11, "bold"))
-        style.map("Green.TButton",
-                  background=[("active", "#34d399"), ("pressed", "#0d9268"),
-                              ("disabled", C["bg_input"])],
-                  foreground=[("disabled", C["text_dim"])])
+    # ── Layout ──────────────────────────────────────────────────
 
-        # Treeview
-        style.configure("Treeview", background=C["bg_input"], foreground=C["text"],
-                        fieldbackground=C["bg_input"], borderwidth=0,
-                        rowheight=26, font=(FF, 9))
-        style.configure("Treeview.Heading", background=C["bg_card"], foreground=C["text_dim"],
-                        font=(FF, 9, "bold"), relief="flat")
-        style.map("Treeview", background=[("selected", C["accent"])],
-                  foreground=[("selected", C["text_bright"])])
+    def _build_sidebar(self):
+        side = ctk.CTkFrame(self, width=236, corner_radius=0, fg_color=C["sidebar"],
+                            border_width=0)
+        side.grid(row=0, column=0, rowspan=2, sticky="nsw")
+        side.grid_propagate(False)
+        side.grid_columnconfigure(0, weight=1)
+        side.grid_rowconfigure(2, weight=1)
 
-        # Progressbar
-        style.configure("Accent.Horizontal.TProgressbar",
-                        troughcolor=C["bg_input"], background=C["accent"],
-                        borderwidth=0, thickness=10)
-        style.configure("Green.Horizontal.TProgressbar",
-                        troughcolor=C["bg_input"], background=C["success"],
-                        borderwidth=0, thickness=10)
-
-        # Scrollbar
-        style.configure("TScrollbar", background=C["bg_card"], troughcolor=C["bg_input"],
-                        borderwidth=0, arrowsize=12)
-
-    def _build_ui(self):
-        # ── HEADER ──
-        hdr = tk.Frame(self, bg=C["bg"], padx=28, pady=18)
-        hdr.pack(fill="x")
-
-        tk.Label(hdr, text="📊", font=(FF, 28), bg=C["bg"], fg=C["accent"]).pack(side="left")
-        tf = tk.Frame(hdr, bg=C["bg"])
-        tf.pack(side="left", padx=(14, 0))
-        tk.Label(tf, text="Tổng hợp Khảo sát", font=(FF, 18, "bold"),
-                 bg=C["bg"], fg=C["text_bright"]).pack(anchor="w")
-        tk.Label(tf, text="Excel (.xls / .xlsx)  →  Word (.docx)   •   Hỗ trợ nhiều sheet   •   Xử lý cục bộ, offline",
-                 font=(FF, 9), bg=C["bg"], fg=C["text_dim"]).pack(anchor="w", pady=(2, 0))
-
-        tk.Label(hdr, text=self.APP_VERSION, font=(FF, 9, "bold"),
-                 bg=C["bg_input"], fg=C["accent"], padx=10, pady=4).pack(side="right")
-
-        sep = tk.Frame(self, bg=C["border"], height=1)
-        sep.pack(fill="x")
-
-        # ── NOTEBOOK ──
-        nb_frame = tk.Frame(self, bg=C["bg"], padx=20, pady=12)
-        nb_frame.pack(fill="both", expand=True)
-
-        self._nb = ttk.Notebook(nb_frame)
-        self._nb.pack(fill="both", expand=True)
-
-        self._tab1 = self._build_tab1()
-        self._tab2 = self._build_tab2()
-        self._tab3 = self._build_tab3()
-        self._nb.add(self._tab1, text="  📄 Tổng hợp báo cáo  ")
-        self._nb.add(self._tab2, text="  💬 Gộp Feedbacks  ")
-        self._nb.add(self._tab3, text="  ⚙️ Cấu hình  ")
-
-        # ── STATUS BAR ──
-        sep2 = tk.Frame(self, bg=C["border"], height=1)
-        sep2.pack(fill="x")
-        status_bar = tk.Frame(self, bg=C["bg_card"])
-        status_bar.pack(fill="x")
-        self._status_var = tk.StringVar(value="Sẵn sàng  •  Chọn tab và thêm file Excel để bắt đầu")
-        tk.Label(status_bar, textvariable=self._status_var, font=(FF, 9),
-                 bg=C["bg_card"], fg=C["text_dim"], anchor="w", padx=24, pady=7).pack(side="left")
-
-    # ── TAB 1: TỔNG HỢP BÁO CÁO ──────────────────────────────────
-
-    def _build_tab1(self):
-        tab = tk.Frame(self._nb, bg=C["bg"])
-
-        # File list
-        card1 = self._card(tab, "📁 File Excel đầu vào")
-        self._fl1 = FileListWidget(card1, on_change=self._on_fl1_change)
-        self._fl1.pack(fill="both", expand=False, pady=(0, 4))
-
-        # Output dir
-        card2 = self._card(tab, "")
-        self._outdir1 = tk.StringVar()
-        OutputDirRow(card2, self._outdir1).pack(fill="x")
-        self._outdir1.trace_add("write", lambda *_: self._save_settings())
-
-        # Action button
-        act = tk.Frame(tab, bg=C["bg"])
-        act.pack(fill="x", padx=20, pady=(4, 8))
-        self._btn1 = ttk.Button(act, text="▶  Bắt đầu xử lý",
-                                style="Accent.TButton", command=self._start_tool1)
-        self._btn1.pack(side="left")
-        self._open1 = ttk.Button(act, text="📂 Mở kết quả", command=lambda: self._open_dir(self._outdir1.get()))
-        self._open1.pack(side="left", padx=(8, 0))
-
-        # Progress
-        prog_frame = tk.Frame(tab, bg=C["bg"], padx=20)
-        prog_frame.pack(fill="x")
-        self._prog1_lbl = tk.Label(prog_frame, text="", font=(FF, 9),
-                                   bg=C["bg"], fg=C["text_dim"], anchor="w")
-        self._prog1_lbl.pack(fill="x")
-        self._prog1 = ttk.Progressbar(prog_frame, style="Accent.Horizontal.TProgressbar",
-                                      mode="determinate", length=300)
-        self._prog1.pack(fill="x", pady=(2, 8))
-
-        # Log
-        log_card = tk.Frame(tab, bg=C["bg"], padx=20, pady=0)
-        log_card.pack(fill="both", expand=True)
-        self._log1 = LogWidget(log_card)
-        self._log1.pack(fill="both", expand=True)
-
-        return tab
-
-    # ── TAB 2: GỘP FEEDBACKS ─────────────────────────────────────
-
-    def _build_tab2(self):
-        tab = tk.Frame(self._nb, bg=C["bg"])
-
-        info = tk.Frame(tab, bg=C["bg_card"], padx=16, pady=10)
-        info.pack(fill="x", padx=20, pady=(12, 0))
-        tk.Label(info, text="ℹ️  Tool này đọc cột AK (index 36) từ các file Excel, làm sạch và xuất Feedbacks.docx",
-                 font=(FF, 9), bg=C["bg_card"], fg=C["text_dim"], wraplength=700, justify="left").pack(anchor="w")
-
-        card1 = self._card(tab, "📁 File Excel đầu vào")
-        self._fl2 = FileListWidget(card1, on_change=self._on_fl2_change)
-        self._fl2.pack(fill="both", expand=False, pady=(0, 4))
-
-        card2 = self._card(tab, "")
-        self._outdir2 = tk.StringVar()
-        OutputDirRow(card2, self._outdir2).pack(fill="x")
-        self._outdir2.trace_add("write", lambda *_: self._save_settings())
-
-        act = tk.Frame(tab, bg=C["bg"], padx=20, pady=4)
-        act.pack(fill="x")
-        self._btn2 = ttk.Button(act, text="💬  Gộp Feedbacks",
-                                style="Green.TButton", command=self._start_tool2)
-        self._btn2.pack(side="left")
-        self._open2 = ttk.Button(act, text="📂 Mở kết quả", command=lambda: self._open_dir(self._outdir2.get()))
-        self._open2.pack(side="left", padx=(8, 0))
-
-        prog_frame = tk.Frame(tab, bg=C["bg"], padx=20)
-        prog_frame.pack(fill="x")
-        self._prog2_lbl = tk.Label(prog_frame, text="", font=(FF, 9),
-                                   bg=C["bg"], fg=C["text_dim"], anchor="w")
-        self._prog2_lbl.pack(fill="x")
-        self._prog2 = ttk.Progressbar(prog_frame, style="Green.Horizontal.TProgressbar",
-                                      mode="determinate", length=300)
-        self._prog2.pack(fill="x", pady=(2, 8))
-
-        log_card = tk.Frame(tab, bg=C["bg"], padx=20, pady=0)
-        log_card.pack(fill="both", expand=True)
-        self._log2 = LogWidget(log_card)
-        self._log2.pack(fill="both", expand=True)
-
-        return tab
-
-    # ── TAB 3: CẤU HÌNH ──────────────────────────────────────────
-
-
-    def _build_tab3(self):
-        tab = tk.Frame(self._nb, bg=C["bg"])
-        
-        # Tạo canvas cuộn cho giao diện cấu hình
-        canvas = tk.Canvas(tab, bg=C["bg"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=C["bg"])
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        
-        def _configure_canvas(event):
-            canvas.itemconfig(canvas_window, width=event.width)
-        canvas.bind('<Configure>', _configure_canvas)
-        
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Bắt sự kiện MouseWheel
-        def _on_mousewheel(event):
-            if sys.platform == "darwin":
-                canvas.yview_scroll(int(-1 * event.delta), "units")
-            else:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-                
-        def _bind_mousewheel(event):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        def _unbind_mousewheel(event):
-            canvas.unbind_all("<MouseWheel>")
-            
-        tab.bind("<Enter>", _bind_mousewheel)
-        tab.bind("<Leave>", _unbind_mousewheel)
-        
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Helper widgets thiết kế GUI Cấu hình
-        def create_card(title):
-            outer = tk.Frame(scrollable_frame, bg=C["bg"], padx=20, pady=8)
-            outer.pack(fill="x")
-            tk.Label(outer, text=title, font=(FF, 11, "bold"), bg=C["bg"], fg=C["text"]).pack(anchor="w", pady=(0, 6))
-            inner = tk.Frame(outer, bg=C["bg_card"], padx=18, pady=14,
-                             highlightbackground=C["border"], highlightthickness=1)
-            inner.pack(fill="both", expand=True)
-            return inner
-            
-        # ── CARD 1: CẤU HÌNH ĐỊNH DẠNG FILE WORD ──
-        c1 = create_card("📝 Định dạng file Word xuất ra")
-        c1.columnconfigure(1, weight=1)
-        c1.columnconfigure(3, weight=1)
-        
-        # Hàng 0: Tên trường & Tên khoa
-        self._field_label(c1, "Tên trường:", row=0, column=0, sticky="w", pady=6)
-        self._entry(c1, self._university_var).grid(row=0, column=1, sticky="ew", pady=6, ipady=4, padx=(0, 20))
-        self._field_label(c1, "Tên khoa/Đơn vị:", row=0, column=2, sticky="w", pady=6)
-        self._entry(c1, self._faculty_var).grid(row=0, column=3, sticky="ew", pady=6, ipady=4)
-
-        # Hàng 1: Quốc hiệu & Tiêu ngữ
-        self._field_label(c1, "Quốc hiệu:", row=1, column=0, sticky="w", pady=6)
-        self._entry(c1, self._country_header_var).grid(row=1, column=1, sticky="ew", pady=6, ipady=4, padx=(0, 20))
-        self._field_label(c1, "Tiêu ngữ:", row=1, column=2, sticky="w", pady=6)
-        self._entry(c1, self._country_slogan_var).grid(row=1, column=3, sticky="ew", pady=6, ipady=4)
-
-        # Hàng 2: Tiêu đề báo cáo (nhiều dòng)
-        self._field_label(c1, "Tiêu đề báo cáo:", row=2, column=0, sticky="nw", pady=10)
-        self._report_title_txt = self._text(c1, height=3)
-        self._report_title_txt.grid(row=2, column=1, columnspan=3, sticky="ew", pady=6)
-
-        # Hàng 3: Font chữ & Cỡ chữ
-        self._field_label(c1, "Font chữ:", row=3, column=0, sticky="w", pady=6)
-        font_box = ttk.Combobox(c1, textvariable=self._font_name_var,
-                                values=["Times New Roman", "Arial", "Calibri", "Segoe UI"],
-                                state="readonly", font=(FF, 10))
-        font_box.grid(row=3, column=1, sticky="ew", pady=6, padx=(0, 20))
-        self._field_label(c1, "Cỡ chữ (pt):", row=3, column=2, sticky="w", pady=6)
-        self._spin(c1, self._font_size_var, 8, 24).grid(row=3, column=3, sticky="ew", pady=6, ipady=2)
-
-        # Hàng 4: Căn lề (Trái, Phải, Trên, Dưới)
-        self._field_label(c1, "Căn lề (cm):", row=4, column=0, sticky="w", pady=6)
-        margin_frame = tk.Frame(c1, bg=C["bg_card"])
-        margin_frame.grid(row=4, column=1, columnspan=3, sticky="ew", pady=6)
-        margin_frame.columnconfigure((1, 3, 5, 7), weight=1)
-        for col, (label, var) in enumerate([
-            ("Trái:", self._margin_left_var), ("Phải:", self._margin_right_var),
-            ("Trên:", self._margin_top_var), ("Dưới:", self._margin_bottom_var),
-        ]):
-            tk.Label(margin_frame, text=label, font=(FF, 9), bg=C["bg_card"],
-                     fg=C["text_dim"]).grid(row=0, column=col * 2, padx=(0, 4))
-            pad = (0, 15) if col < 3 else (0, 0)
-            self._entry(margin_frame, var, width=6).grid(
-                row=0, column=col * 2 + 1, sticky="ew", padx=pad, ipady=3)
-
-        # Hàng 5: Màu nền bảng & Số dòng trống ý kiến
-        self._field_label(c1, "Màu nền bảng (HEX):", row=5, column=0, sticky="w", pady=6)
-        self._entry(c1, self._table_header_bg_var).grid(row=5, column=1, sticky="ew", pady=6, ipady=4, padx=(0, 20))
-        self._field_label(c1, "Dòng trống ý kiến:", row=5, column=2, sticky="w", pady=6)
-        self._spin(c1, self._open_response_lines_var, 0, 20).grid(row=5, column=3, sticky="ew", pady=6, ipady=2)
-        
-        # ── CARD 2: CẤU HÌNH TỪ KHÓA FEEDBACK ──
-        c2 = create_card("💬 Cấu hình Từ khóa Feedback")
-        c2.columnconfigure(1, weight=1)
-        
-        # Hàng 0: Cột feedback tìm kiếm
-        self._field_label(c2, "Tìm cột feedback:", row=0, column=0, sticky="w", pady=6)
-        self._entry(c2, self._feedback_search_keywords_var).grid(row=0, column=1, sticky="ew", pady=6, ipady=4)
-        self._hint(c2, "(Cách nhau bằng dấu phẩy. Ví dụ: ý kiến đóng góp, feedback, nhận xét)", row=1, column=1)
-
-        # Hàng 2: Từ khóa bỏ qua
-        self._field_label(c2, "Từ khóa bỏ qua:", row=2, column=0, sticky="w", pady=6)
-        self._entry(c2, self._feedback_skip_keywords_var).grid(row=2, column=1, sticky="ew", pady=6, ipady=4)
-        self._hint(c2, "(Cách nhau bằng dấu phẩy. Loại bỏ các phản hồi khớp hoàn toàn với cụm từ này)", row=3, column=1)
-
-        # Hàng 4: Regex bỏ qua (nhiều dòng)
-        self._field_label(c2, "Regex bỏ qua:", row=4, column=0, sticky="nw", pady=10)
-        self._feedback_skip_patterns_txt = self._text(c2, height=4)
-        self._feedback_skip_patterns_txt.grid(row=4, column=1, sticky="ew", pady=6)
-        self._hint(c2, "(Mỗi dòng một biểu thức chính quy. Dùng để lọc bỏ các phản hồi trùng khớp định dạng)", row=5, column=1)
-
-        # ── HÀNH ĐỘNG ──
-        act_frame = tk.Frame(scrollable_frame, bg=C["bg"], padx=20, pady=12)
-        act_frame.pack(fill="x")
-
-        btn_save = ttk.Button(act_frame, text="💾 Lưu cấu hình", style="Accent.TButton", command=self._save_config_from_ui)
-        btn_save.pack(side="left")
-        
-        btn_reset = ttk.Button(act_frame, text="🔄 Khôi phục mặc định", command=self._reset_config_to_defaults)
-        btn_reset.pack(side="left", padx=(10, 0))
-        
-        return tab
-
-    # ── HELPERS ──────────────────────────────────────────────────
-
-    def _card(self, parent, title):
-        outer = tk.Frame(parent, bg=C["bg"], padx=20, pady=4)
-        outer.pack(fill="x")
-        if title:
-            tk.Label(outer, text=title, font=(FF, 10, "bold"),
-                     bg=C["bg"], fg=C["text"]).pack(anchor="w", pady=(0, 6))
-        inner = tk.Frame(outer, bg=C["bg_card"], padx=12, pady=10,
-                         highlightbackground=C["border"], highlightthickness=1)
-        inner.pack(fill="x")
-        return inner
-
-    # ── Form field factories (dùng chung cho tab Cấu hình) ───────
-
-    @staticmethod
-    def _field_label(parent, text, **grid):
-        lbl = tk.Label(parent, text=text, font=(FF, 9, "bold"),
-                       bg=C["bg_card"], fg=C["text"])
-        lbl.grid(padx=(0, 10), **grid)
-        return lbl
-
-    @staticmethod
-    def _hint(parent, text, **grid):
-        lbl = tk.Label(parent, text=text, font=(FF, 8),
-                       bg=C["bg_card"], fg=C["text_dim"])
-        lbl.grid(sticky="w", pady=(0, 6), **grid)
-        return lbl
-
-    @staticmethod
-    def _entry(parent, textvariable, **kwargs):
-        return tk.Entry(parent, textvariable=textvariable, font=(FF, 10),
-                        bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
-                        relief="flat", bd=0, highlightthickness=1,
-                        highlightbackground=C["border"], highlightcolor=C["accent"],
-                        **kwargs)
-
-    @staticmethod
-    def _text(parent, height, **kwargs):
-        return tk.Text(parent, font=(FF, 10), height=height,
-                       bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
-                       relief="flat", highlightthickness=1,
-                       highlightbackground=C["border"], highlightcolor=C["accent"],
-                       **kwargs)
-
-    @staticmethod
-    def _spin(parent, textvariable, frm, to, **kwargs):
-        return tk.Spinbox(parent, textvariable=textvariable, from_=frm, to=to,
-                          increment=1, font=(FF, 10), bg=C["bg_input"], fg=C["text"],
-                          relief="flat", bd=0, highlightthickness=1,
-                          highlightbackground=C["border"], highlightcolor=C["accent"],
-                          **kwargs)
-
-    def _on_fl1_change(self, n):
-        self._status_var.set(f"Tab 1: {n} file đã chọn" if n else "Sẵn sàng  •  Chọn tab và thêm file Excel để bắt đầu")
-
-    def _on_fl2_change(self, n):
-        self._status_var.set(f"Tab 2: {n} file đã chọn" if n else "Sẵn sàng  •  Chọn tab và thêm file Excel để bắt đầu")
-
-    def _open_dir(self, path):
-        if path and os.path.isdir(path):
-            if sys.platform == "win32":
-                os.startfile(path)
-            elif sys.platform == "darwin":
-                os.system(f'open "{path}"')
-            else:
-                os.system(f'xdg-open "{path}"')
+        brand = ctk.CTkFrame(side, fg_color="transparent")
+        brand.grid(row=0, column=0, sticky="ew", padx=20, pady=(26, 28))
+        logo = self._logo_image()
+        if logo:
+            ctk.CTkLabel(brand, text="", image=logo).pack(side="left")
         else:
-            messagebox.showinfo("Thông báo", "Thư mục kết quả chưa tồn tại.")
+            ctk.CTkLabel(brand, text="📊", font=F(28)).pack(side="left")
+        names = ctk.CTkFrame(brand, fg_color="transparent")
+        names.pack(side="left", padx=(12, 0))
+        ctk.CTkLabel(names, text=APP_NAME, font=F(15, "bold"), text_color=C["text"],
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(names, text="Excel → Word • ĐBCL", font=F(11), text_color=C["muted"],
+                     anchor="w").pack(anchor="w")
 
-    def _ensure_outdir(self, var, files):
-        d = var.get().strip()
-        if not d and files:
-            d = os.path.join(os.path.dirname(files[0]), "output")
-            var.set(d)
-        os.makedirs(d, exist_ok=True)
-        return d
+        nav = ctk.CTkFrame(side, fg_color="transparent")
+        nav.grid(row=1, column=0, sticky="ew", padx=14)
+        self._nav = {}
+        for key, icon, label, _ in self.PAGES:
+            b = ctk.CTkButton(nav, text=f"  {icon}    {label}", anchor="w", height=42,
+                              corner_radius=10, font=F(14), fg_color="transparent",
+                              hover_color=C["neutral_btn"], text_color=C["text"],
+                              command=lambda k=key: self._show(k))
+            b.pack(fill="x", pady=2)
+            self._nav[key] = b
 
-    def _set_progress(self, bar, lbl, value, text=""):
-        def _do():
-            bar["value"] = value
-            if text:
-                lbl.config(text=text)
-        self.after(0, _do)
+        bottom = ctk.CTkFrame(side, fg_color="transparent")
+        bottom.grid(row=3, column=0, sticky="ew", padx=20, pady=20)
+        links = ctk.CTkFrame(bottom, fg_color="transparent")
+        links.pack(fill="x")
+        ctk.CTkLabel(links, text=f"Phiên bản {APP_VERSION}", font=F(11),
+                     text_color=C["muted"]).pack(side="left")
+        ctk.CTkButton(links, text="Mở nhật ký", width=10, height=22, font=F(11),
+                      fg_color="transparent", hover_color=C["neutral_btn"],
+                      text_color=C["accent"], command=self._open_logs).pack(side="right")
 
-    def _set_status(self, text):
-        self.after(0, lambda: self._status_var.set(text))
-
-    def _save_settings(self):
-        self._settings["outdir1"] = self._outdir1.get()
-        self._settings["outdir2"] = self._outdir2.get()
-        save_settings(self._settings)
-
-    def _load_settings_to_ui(self):
-        self._outdir1.set(self._settings.get("outdir1", ""))
-        self._outdir2.set(self._settings.get("outdir2", ""))
-        
-        # Tải cấu hình word_format
-        wf = self._settings.get("word_format", {})
-        from excel_to_word import CONFIG
-        
-        self._university_var.set(wf.get("university_name", CONFIG["university_name"]))
-        self._faculty_var.set(wf.get("faculty_name", CONFIG["faculty_name"]))
-        self._country_header_var.set(wf.get("country_header", CONFIG["country_header"]))
-        self._country_slogan_var.set(wf.get("country_slogan", CONFIG["country_slogan"]))
-        
-        title_lines = CONFIG["report_title_lines"]
-        default_title = "\n".join(title_lines)
-        report_title_val = wf.get("report_title", default_title)
-        self._report_title_txt.delete("1.0", "end")
-        self._report_title_txt.insert("1.0", report_title_val)
-        
-        self._font_name_var.set(wf.get("font_name", CONFIG["font_name"]))
-        self._font_size_var.set(str(wf.get("font_size", CONFIG["font_size"])))
-        self._margin_top_var.set(str(wf.get("margin_top", CONFIG["margin_top"])))
-        self._margin_bottom_var.set(str(wf.get("margin_bottom", CONFIG["margin_bottom"])))
-        self._margin_left_var.set(str(wf.get("margin_left", CONFIG["margin_left"])))
-        self._margin_right_var.set(str(wf.get("margin_right", CONFIG["margin_right"])))
-        self._table_header_bg_var.set(wf.get("table_header_bg", CONFIG["table_header_bg"]))
-        self._open_response_lines_var.set(str(wf.get("open_response_lines", CONFIG["open_response_lines"])))
-        
-        # Tải cấu hình feedback_config
-        fc = self._settings.get("feedback_config", {})
-        
-        search_kw = fc.get("search_keywords", CONFIG["feedback_search_keywords"])
-        if isinstance(search_kw, list):
-            search_kw = ", ".join(search_kw)
-        self._feedback_search_keywords_var.set(search_kw)
-        
-        skip_kw = fc.get("skip_keywords", CONFIG["feedback_skip_keywords"])
-        if isinstance(skip_kw, list):
-            skip_kw = ", ".join(skip_kw)
-        self._feedback_skip_keywords_var.set(skip_kw)
-        
-        skip_pat = fc.get("skip_patterns", CONFIG["feedback_skip_patterns"])
-        if isinstance(skip_pat, list):
-            skip_pat = "\n".join(skip_pat)
-        self._feedback_skip_patterns_txt.delete("1.0", "end")
-        self._feedback_skip_patterns_txt.insert("1.0", skip_pat)
-
-    def _save_config_from_ui(self):
+    def _logo_image(self):
         try:
-            margin_left = float(self._margin_left_var.get())
-            margin_right = float(self._margin_right_var.get())
-            margin_top = float(self._margin_top_var.get())
-            margin_bottom = float(self._margin_bottom_var.get())
-            open_lines = int(self._open_response_lines_var.get())
-            font_size = int(self._font_size_var.get())
-        except ValueError:
-            messagebox.showerror("Lỗi nhập liệu", "Vui lòng kiểm tra lại các trường số (Lề trang, Cỡ chữ, Số dòng trống) phải là số hợp lệ.")
-            return
-            
-        search_kw = [k.strip() for k in self._feedback_search_keywords_var.get().split(",") if k.strip()]
-        skip_kw = [k.strip() for k in self._feedback_skip_keywords_var.get().split(",") if k.strip()]
-        skip_pat = [p.strip() for p in self._feedback_skip_patterns_txt.get("1.0", "end").split("\n") if p.strip()]
-        report_title = self._report_title_txt.get("1.0", "end").strip()
-        
-        self._settings["word_format"] = {
-            "university_name": self._university_var.get().strip(),
-            "faculty_name": self._faculty_var.get().strip(),
-            "country_header": self._country_header_var.get().strip(),
-            "country_slogan": self._country_slogan_var.get().strip(),
-            "report_title": report_title,
-            "font_name": self._font_name_var.get().strip(),
-            "font_size": font_size,
-            "margin_top": margin_top,
-            "margin_bottom": margin_bottom,
-            "margin_left": margin_left,
-            "margin_right": margin_right,
-            "table_header_bg": self._table_header_bg_var.get().strip(),
-            "open_response_lines": open_lines,
-        }
-        
-        self._settings["feedback_config"] = {
-            "search_keywords": search_kw,
-            "skip_keywords": skip_kw,
-            "skip_patterns": skip_pat,
-        }
-        
-        save_settings(self._settings)
-        
-        # Reload vào excel_to_word config
-        from excel_to_word import load_settings_into_config
-        load_settings_into_config()
-        
-        messagebox.showinfo("Thành công", "Đã lưu cấu hình thành công!")
+            from PIL import Image
+            img = Image.open(resource_path(os.path.join("assets", "icon_256.png")))
+            return ctk.CTkImage(light_image=img, size=(40, 40))
+        except Exception:
+            return None
 
-    def _reset_config_to_defaults(self):
-        if not messagebox.askyesno("Xác nhận", "Bạn có chắc chắn muốn khôi phục cấu hình về mặc định của nhà trường?"):
-            return
-            
-        if "word_format" in self._settings:
-            del self._settings["word_format"]
-        if "feedback_config" in self._settings:
-            del self._settings["feedback_config"]
-            
-        save_settings(self._settings)
-        
-        # Reload defaults vào CONFIG
-        from excel_to_word import load_settings_into_config
-        load_settings_into_config()
-        
-        # Cập nhật UI
-        self._load_settings_to_ui()
-        messagebox.showinfo("Thành công", "Đã khôi phục cấu hình mặc định!")
-
-
-    # ── TOOL 1 WORKER ────────────────────────────────────────────
-
-    def _start_tool1(self):
-        files = self._fl1.files
-        if not files:
-            messagebox.showwarning("Chưa có file", "Vui lòng thêm file Excel trước khi xử lý.")
-            return
-        out_dir = self._ensure_outdir(self._outdir1, files)
-        self._btn1.state(["disabled"])
-        self._log1.clear()
-        self._prog1["value"] = 0
-        threading.Thread(target=self._worker_tool1, args=(files, out_dir), daemon=True).start()
-
-    def _worker_tool1(self, files, out_dir):
-        total = len(files)
-        success = fail = total_out = 0
-        _start_time = datetime.now()
-        self._log1.log(f"{'═'*48}", "dim")
-        self._log1.log(f"Bắt đầu xử lý {total} file Excel", "info")
-        self._log1.log(f"Thư mục kết quả: {out_dir}", "dim")
-        self._log1.log(f"{'═'*48}", "dim")
-
-        for fi, filepath in enumerate(files):
-            name = os.path.basename(filepath)
-            pct = int(fi / total * 100)
-            self._set_progress(self._prog1, self._prog1_lbl, pct,
-                               f"Đang xử lý {fi+1}/{total}: {name[:55]}...")
-            self._set_status(f"Đang xử lý file {fi+1}/{total}...")
-            self._log1.log(f"", "dim")
-            self._log1.log(f"📄 {name}", "info")
-
-            try:
-                n_sheets, sheet_names = get_sheet_count(filepath)
-                basename = os.path.splitext(name)[0]
-                all_data = []
-
-                for si in range(n_sheets):
-                    try:
-                        data = extract_data_from_excel(filepath, sheet_index=si, apply_filename_suffix=False)
-                        if data["survey_questions"]:
-                            all_data.append(data)
-                        else:
-                            self._log1.log(f'   ⏭ Sheet {si+1} "{sheet_names[si]}": bỏ qua (không có dữ liệu)', "dim")
-                    except Exception as e:
-                        self._log1.log(f'   ⚠ Sheet {si+1} "{sheet_names[si]}": lỗi đọc – {e}', "warning")
-                        continue
-
-                if not all_data:
-                    self._log1.log("   ⚠️ Không có sheet nào chứa dữ liệu khảo sát", "warning")
-                    fail += 1
-                    continue
-
-                # Lấy số SV KHÔNG tham gia khảo sát từ tên file
-                match = re.search(r'\s+(\d+)$', basename)
-                sv_khong_khao_sat = int(match.group(1)) if match else None
-
-                is_valid = True
-                if len(all_data) == 1:
-                    data = all_data[0]
-                    total_phieu = data["survey_questions"][0].get("total", 0) if data["survey_questions"] else 0
-                    if sv_khong_khao_sat is not None:
-                        data["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
-                    
-                    if data["meta"].get("tong_so_sv") is None:
-                        is_valid = False
-                    else:
-                        out_path = os.path.join(out_dir, f"{basename}.docx")
-                        create_word_report(data, out_path)
-                        total_out += 1
-                        n_q = len(data["survey_questions"])
-                        n_resp = len(parse_open_responses(data["open_responses"]))
-                        self._log1.log(f"   ✅ {n_q} câu, {n_resp} ý kiến, {data['meta']['tong_so_sv']} SV → {os.path.basename(out_path)}", "success")
-                else:
-                    merged = merge_sheets_data(all_data)
-                    if merged:
-                        total_tong_sv = 0
-                        has_any_tong_sv = False
-                        for d in all_data:
-                            sv = d["meta"].get("tong_so_sv", None) # Đây là các F5 do apply_filename_suffix=False
-                            if sv is not None:
-                                total_tong_sv += sv
-                                has_any_tong_sv = True
-
-                        total_phieu = merged["survey_questions"][0].get("total", 0) if merged["survey_questions"] else 0
-                        if sv_khong_khao_sat is not None:
-                            merged["meta"]["tong_so_sv"] = total_phieu + sv_khong_khao_sat
-                        elif has_any_tong_sv:
-                            merged["meta"]["tong_so_sv"] = total_tong_sv
-                        else:
-                            merged["meta"]["tong_so_sv"] = None
-                            merged["warnings"].append("⚠️ Không lấy được số SV không tham gia từ tên file và ô F5 cũng trống ở tất cả các sheet!")
-
-                        if merged["meta"].get("tong_so_sv") is None:
-                            is_valid = False
-                        else:
-                            out_path = os.path.join(out_dir, f"{basename}.docx")
-                            create_word_report(merged, out_path)
-                            total_out += 1
-                            total_sv = merged["meta"].get("tong_so_sv", 0)
-                            self._log1.log(f"   📊 ĐÃ GỘP: {len(all_data)} sheets, {total_sv} SV → {os.path.basename(out_path)}", "info")
-
-                if not is_valid:
-                    self._log1.log(f"   ❌ Không xác định được Tổng số SV cho file {name}", "error")
-                    msg = (f"File: {name}\n\nKhông xác định được Tổng số SV cho file này.\n\n"
-                           f"Vui lòng ghi số SV không tham gia ở cuối tên file\n"
-                           f"hoặc điền vào ô F5 trong Excel rồi thử lại.")
-                    self.after(0, lambda m=msg: messagebox.showwarning("Thiếu thông tin Tổng SV", m))
-                    fail += 1
-                    continue
-
-                success += 1
-            except Exception as e:
-                fail += 1
-                self._log1.log(f"   ❌ Lỗi: {e}", "error")
-
-        self._set_progress(self._prog1, self._prog1_lbl, 100, "Hoàn tất!")
-        _elapsed = (datetime.now() - _start_time).total_seconds()
-        bench = benchmark.build_result(n_reports=total_out, auto_seconds=_elapsed)
-        self._log1.log(f"", "dim")
-        self._log1.log(f"{'═'*48}", "dim")
-        self._log1.log(f"✅ Hoàn tất: {success} thành công, {fail} thất bại  •  {total_out} file tạo ra", "success")
-        self._log1.log(f"⏱ Hiệu quả (ước lượng so với làm thủ công):", "info")
-        for line in bench.summary_lines():
-            self._log1.log(f"   • {line}", "dim")
-        self._log1.log(f"📂 Kết quả: {out_dir}", "dim")
-        self._set_status(f"✅ Hoàn tất  •  {total_out} file tạo ra  •  {out_dir}")
-        self.after(0, lambda: self._btn1.state(["!disabled"]))
-
-    # ── TOOL 2 WORKER ────────────────────────────────────────────
-
-    def _start_tool2(self):
-        files = self._fl2.files
-        if not files:
-            messagebox.showwarning("Chưa có file", "Vui lòng thêm file Excel trước khi xử lý.")
-            return
-        out_dir = self._ensure_outdir(self._outdir2, files)
-        self._btn2.state(["disabled"])
-        self._log2.clear()
-        self._prog2["value"] = 0
-        threading.Thread(target=self._worker_tool2, args=(files, out_dir), daemon=True).start()
-
-    def _worker_tool2(self, files, out_dir):
-        self._log2.log(f"{'═'*48}", "dim")
-        self._log2.log(f"Bắt đầu gộp feedbacks từ {len(files)} file", "info")
-        self._log2.log(f"{'═'*48}", "dim")
-        self._set_progress(self._prog2, self._prog2_lbl, 30, "Đang đọc dữ liệu...")
-        self._set_status("Đang tổng hợp feedbacks...")
-
+    def _set_icon(self):
         try:
-            for f in files:
-                self._log2.log(f"📄 Đọc: {os.path.basename(f)}", "dim")
-            output_path = merge_feedbacks(files, out_dir)
-            self._set_progress(self._prog2, self._prog2_lbl, 100, "Hoàn tất!")
-            if output_path:
-                self._log2.log(f"", "dim")
-                self._log2.log(f"✅ Hoàn tất gộp feedbacks", "success")
-                self._log2.log(f"📄 File kết quả: {os.path.basename(output_path)}", "info")
-                self._log2.log(f"📂 Thư mục: {out_dir}", "dim")
-                self._set_status(f"✅ Hoàn tất gộp feedbacks  •  {os.path.basename(output_path)}")
+            if sys.platform == "win32":
+                self.iconbitmap(resource_path(os.path.join("assets", "icon.ico")))
             else:
-                self._log2.log("⚠️ Không tìm thấy feedback nào trong cột AK", "warning")
-                self._set_status("⚠️ Không có dữ liệu feedback")
-        except Exception as e:
-            self._log2.log(f"❌ Lỗi: {e}", "error")
-            self._set_status("❌ Lỗi xử lý")
-            self._set_progress(self._prog2, self._prog2_lbl, 0, "")
+                self._icon = tk.PhotoImage(file=resource_path(os.path.join("assets", "icon_256.png")))
+                self.iconphoto(True, self._icon)
+        except Exception:
+            pass
 
-        self.after(0, lambda: self._btn2.state(["!disabled"]))
+    def _center(self):
+        self.update_idletasks()
+        w, h = 1180, 760
+        x = max(0, (self.winfo_screenwidth() - w) // 2)
+        y = max(0, (self.winfo_screenheight() - h) // 3)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _initial_page(self):
+        """Cho phép mở sẵn một trang (DBCL_START_TAB hoặc --tab N) — phục vụ chụp ảnh tài liệu."""
+        start = os.environ.get("DBCL_START_TAB")
+        if start is None and "--tab" in sys.argv:
+            idx = sys.argv.index("--tab") + 1
+            start = sys.argv[idx] if idx < len(sys.argv) else None
+        try:
+            return self.PAGES[int(start)][0]
+        except (TypeError, ValueError, IndexError):
+            return self.PAGES[0][0]
+
+    def _show(self, key):
+        self._pages[key].tkraise()
+        for k, b in self._nav.items():
+            active = k == key
+            b.configure(fg_color=C["accent_soft"] if active else "transparent",
+                        text_color=C["accent"] if active else C["text"],
+                        font=F(14, "bold" if active else "normal"))
+
+    def _open_logs(self):
+        try:
+            open_path(get_log_dir())
+        except Exception as e:
+            messagebox.showinfo("Nhật ký", f"Không mở được thư mục nhật ký:\n{e}")
+
+    # ── Trạng thái & cài đặt ────────────────────────────────────
+
+    def update_setting(self, key, value):
+        self.settings[key] = value
+        save_settings(self.settings)
+
+    def set_status(self, text):
+        self._status.configure(text=text)
+
+    # ── Hàng đợi cập nhật từ luồng nền ──────────────────────────
+
+    def post(self, fn):
+        """Lên lịch chạy fn trên luồng giao diện (an toàn khi gọi từ luồng nền)."""
+        self._queue.put(fn)
+
+    def post_status(self, text):
+        self.post(lambda: self.set_status(text))
+
+    def _drain_queue(self):
+        try:
+            while True:
+                self._queue.get_nowait()()
+        except queue.Empty:
+            pass
+        self.after(50, self._drain_queue)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1108,21 +1008,11 @@ class App(tk.Tk):
 def main():
     """Điểm khởi chạy ứng dụng GUI."""
     try:
-        app = App()
-        app.mainloop()
-    except Exception as e:
-        import traceback
-        try:
-            messagebox.showerror(
-                "Lỗi Hệ Thống",
-                f"Ứng dụng gặp lỗi nghiêm trọng khi đang hoạt động:\n\n{traceback.format_exc()}"
-            )
-        except Exception:
-            pass
-        with open("crash_error.txt", "w", encoding="utf-8") as f:
-            traceback.print_exc(file=f)
+        App().mainloop()
+    except Exception:
+        _fatal("Lỗi hệ thống",
+               f"Ứng dụng gặp lỗi nghiêm trọng:\n\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":
     main()
-
