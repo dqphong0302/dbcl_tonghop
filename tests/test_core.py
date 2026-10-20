@@ -313,4 +313,4 @@ def test_generate_report_strips_absent_count_from_name(tmp_path):
 def test_build_sections_2627_template_form():
     nums = [str(i) for i in range(1, 11)] + ["11.1", "11.2", "11.3", "11.4"] + [str(i) for i in range(12, 20)]
     secs = e2w.build_sections([{"number": n} for n in nums])
-    assert [(s["start"], s["end"]) for s in secs] == [(0, 10), (10, 14), (14, 21), (21, 22)]
+    assert [(s["start"], s["end"]) for s in secs] == [(0, 10), (10, 14), (14, 18), (18, 22)]

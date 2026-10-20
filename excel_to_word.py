@@ -222,8 +222,8 @@ DEFAULT_CONFIG = {
         "\n"
         "I. CUNG CẤP THÔNG TIN VỀ MÔN HỌC/HỌC PHẦN | 1-10\n"
         "II. PHƯƠNG PHÁP GIẢNG DẠY | 11\n"
-        "III. LƯỢNG GIÁ HỌC PHẦN | 12-18\n"
-        "IV. CẢM NHẬN CHUNG | 19"
+        "III. LƯỢNG GIÁ HỌC PHẦN | 12-15\n"
+        "IV. CẢM NHẬN CHUNG | 16-19"
     ),
     "signer_title": "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN",
 }
@@ -989,61 +989,31 @@ def create_word_report(data, output_path):
             "Sinh viên nước ngoài": {"labels": ["Có", "Không"], "col_indices": [0, 1]},
         }
         
-        for bg_item in bg:
-            label = bg_item["label"]
-            counts = bg_item["counts"]
-            pcts = bg_item["percentages"]
-            
-            # Tìm mapping phù hợp
-            matched_key = None
-            for key in bg_mapping:
-                if key.lower() in label.lower():
-                    matched_key = key
-                    break
-            
-            if matched_key:
-                mapping = bg_mapping[matched_key]
-                for j, sub_label in enumerate(mapping["labels"]):
-                    row = bg_table.add_row()
-                    
-                    if j == 0:
-                        format_cell_text(row.cells[0], matched_key, font_size=11)
-                    else:
-                        format_cell_text(row.cells[0], "", font_size=11)
-                    
-                    format_cell_text(row.cells[1], sub_label, font_size=11)
-                    
+        # Luôn in đủ các nhóm theo mẫu; nhóm không có trong Excel để trống số liệu
+        def _find_bg(key):
+            return next((it for it in bg if key.lower() in it["label"].lower()), None)
+
+        for key, mapping in bg_mapping.items():
+            item = _find_bg(key)
+            first_row = len(bg_table.rows)
+            for j, sub_label in enumerate(mapping["labels"]):
+                row = bg_table.add_row()
+                format_cell_text(row.cells[0], key if j == 0 else "", font_size=11)
+                format_cell_text(row.cells[1], sub_label, font_size=11)
+                count_txt = pct_txt = ""
+                if item:
                     idx = mapping["col_indices"][j]
-                    count_val = int(counts[idx]) if idx < len(counts) else 0
-                    pct_val = pcts[idx] * 100 if idx < len(pcts) else 0
-                    
-                    format_cell_text(row.cells[2], str(count_val), font_size=11,
-                                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
-                    format_cell_text(row.cells[3], f"{pct_val:.2f}%", font_size=11,
-                                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
-        
-        # Merge ô trùng lặp ở cột đầu tiên
-        # (Thực hiện merge vertical cho các ô cùng nhóm)
-        row_idx = 1  # Bỏ qua header
-        for bg_item in bg:
-            label = bg_item["label"]
-            matched_key = None
-            for key in bg_mapping:
-                if key.lower() in label.lower():
-                    matched_key = key
-                    break
-            if matched_key:
-                n_rows = len(bg_mapping[matched_key]["labels"])
-                if n_rows > 1 and row_idx + n_rows - 1 < len(bg_table.rows):
-                    # Merge cells
-                    a = bg_table.cell(row_idx, 0)
-                    b = bg_table.cell(row_idx + n_rows - 1, 0)
-                    a.merge(b)
-                    # Center text vertically
-                    for para in a.paragraphs:
-                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                row_idx += n_rows
-        
+                    counts, pcts = item["counts"], item["percentages"]
+                    count_txt = str(int(counts[idx])) if idx < len(counts) else "0"
+                    pct_txt = f"{(pcts[idx] * 100 if idx < len(pcts) else 0):.2f}%"
+                format_cell_text(row.cells[2], count_txt, font_size=11,
+                                 alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                format_cell_text(row.cells[3], pct_txt, font_size=11,
+                                 alignment=WD_ALIGN_PARAGRAPH.CENTER)
+            merged_cell = bg_table.cell(first_row, 0).merge(bg_table.cell(len(bg_table.rows) - 1, 0))
+            for para in merged_cell.paragraphs:
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
         # Giảm giãn dòng bảng thông tin nền về 1.0
         for row in bg_table.rows:
             for cell in row.cells:
