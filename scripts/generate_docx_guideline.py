@@ -290,7 +290,7 @@ def generate_document():
     add_paragraph(doc, "Chúc bạn có trải nghiệm làm việc hiệu quả cùng phần mềm!", italic=True, font_size=11, color=RGBColor(108, 99, 255), alignment=WD_ALIGN_PARAGRAPH.CENTER, space_before=12)
     
     # Save document
-    output_filename = "Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx"
+    output_filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx")
     doc.save(output_filename)
     print(f"SUCCESS: Generated {output_filename}")
 

@@ -299,21 +299,25 @@ dbcl_tonghop/
 │   └── workflows/
 │       ├── build.yml            # CI/CD tự động build .exe và .app
 │       └── test.yml             # CI/CD chạy kiểm thử tự động trên nhiều OS & phiên bản Python
-├── docs/                        # Tài liệu hướng dẫn & Báo cáo SKKN
-│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx
-│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.pdf
+├── assets/                      # Icon ứng dụng (.ico, .icns, .png)
+├── docs/                        # Tài liệu hướng dẫn & Sáng kiến kinh nghiệm
+│   ├── 2026_PhongDang_Sangkien.docx
+│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx / .pdf
+│   ├── SKKN_BanThao.md
 │   ├── khao_sat_su_dung.md     # Đánh giá thực tế từ người dùng
 │   ├── tool1_tong_hop_du_lieu.md
 │   └── tool2_gop_feedbacks.md
+├── dulieu/                      # Dữ liệu mẫu phục vụ kiểm thử & thử nghiệm
+│   └── input-feedback/          # File mẫu cho chức năng Gộp Feedbacks
+├── scripts/
+│   └── generate_docx_guideline.py  # Sinh file hướng dẫn sử dụng (.docx) vào docs/
 ├── tests/                       # Bộ kiểm thử tự động (Pytest)
 │   ├── test_core.py             # Kiểm thử tích hợp luồng xử lý chính
 │   ├── test_classifier.py       # Kiểm thử phân loại NLP ý kiến
 │   ├── test_benchmark.py        # Kiểm thử module đo lường hiệu năng
 │   └── test_data_utils.py       # Kiểm thử lớp đọc dữ liệu & xác thực
-├── dulieu/                      # Dữ liệu mẫu phục vụ kiểm thử & thử nghiệm
 ├── app_logging.py               # Hệ thống ghi nhật ký hoạt động có cấu trúc
 ├── benchmark.py                 # Bộ đo thời gian & tính toán hiệu năng
-├── assets/                      # Icon ứng dụng (.ico, .icns, .png)
 ├── TongHopKhaoSat.spec          # Cấu hình PyInstaller dùng chung Windows & macOS
 ├── build_mac.sh                 # Script đóng gói tự động cho macOS
 ├── build_windows.bat            # Script đóng gói tự động cho Windows

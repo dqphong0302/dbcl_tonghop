@@ -214,7 +214,7 @@ def test_multi_sheet_aggregation_single_suffix(tmp_path):
     assert merged["meta"]["tong_so_sv"] == total_phieu + 2
 
 
-NEW_SURVEY_FILE = os.path.join(ROOT, "CTXH26 Giáo dục thể chất 1 2627HKI 0.xls")
+NEW_SURVEY_FILE = os.path.join(DULIEU, "2627", "CTXH26 Giáo dục thể chất 1 2627HKI 0.xls")
 
 @pytest.mark.skipif(not os.path.exists(NEW_SURVEY_FILE), reason="thiếu file mẫu mới 2627")
 def test_new_report_template_format(tmp_path):

@@ -51,3 +51,7 @@ output/
 ~$*.xlsx
 ~$*.xls
 asd*
+
+# Bản lưu trữ cá nhân & dữ liệu lớp thật (không đưa lên Git)
+archive/
+dulieu/2627/
