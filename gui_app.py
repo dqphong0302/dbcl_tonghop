@@ -46,6 +46,7 @@ try:
     from merge_feedbacks import merge_feedbacks
     from app_logging import get_logger, get_log_dir
     import benchmark
+    import ai_summary
 except Exception:
     _fatal("Lỗi khởi động",
            f"Không thể khởi động ứng dụng do lỗi import:\n\n{traceback.format_exc()}")
@@ -545,13 +546,17 @@ class ReportPage(ToolPage):
             self.post_log(f"📄 {name}", "info")
 
             result = e2w.generate_report(path, out_dir,
-                                         on_progress=lambda m: self.post_log(f"   ⏭ {m}", "dim"))
+                                         on_progress=lambda m: self.post_log(f"   • {m}", "dim"))
             if result.ok:
                 ok += 1
                 merged = f"gộp {result.n_sheets} sheet, " if result.merged else ""
                 self.post_log(f"   ✅ {merged}{result.n_questions} câu, {result.n_responses} ý kiến, "
                               f"{result.total_students} SV → {os.path.basename(result.output_path)}",
                               "success")
+                if result.summary_source == "ai":
+                    self.post_log("   🤖 Phần 3: đã tóm tắt ý kiến bằng AI", "info")
+                elif result.summary_source == "offline" and ai_summary.is_configured():
+                    self.post_log("   📴 Không kết nối được AI — Phần 3 liệt kê ý kiến như cũ", "warning")
                 for w in result.warnings:
                     self.post_log(f"   ⚠️ {w}", "warning")
             else:
@@ -735,6 +740,39 @@ class SettingsPage(ctk.CTkFrame):
             cell.grid(row=row, column=0, sticky="ew", pady=6)
             self._widgets[key] = self._textbox(cell, height) if height else self._entry(cell)
 
+        # ── AI tóm tắt ý kiến
+        c4 = card(body)
+        c4.grid(row=3, column=0, sticky="ew", pady=(0, 16))
+        head4 = ctk.CTkFrame(c4, fg_color="transparent")
+        head4.pack(fill="x", padx=20, pady=(18, 12))
+        section_title(head4, "AI tóm tắt ý kiến sinh viên",
+                      "Khi có mạng, AI tổng hợp ý kiến thành một đoạn văn (Phần 3 báo cáo và "
+                      "Feedbacks.docx).\nKhông có mạng hoặc AI lỗi → tự động xử lý như cũ "
+                      "(liệt kê/phân loại offline).").pack(side="left")
+        self._ai_enabled = tk.BooleanVar()
+        ctk.CTkSwitch(head4, text="Bật AI", variable=self._ai_enabled, font=F(13),
+                      progress_color=C["accent"], text_color=C["text"]).pack(side="right")
+        form4 = ctk.CTkFrame(c4, fg_color="transparent")
+        form4.pack(fill="x", padx=20, pady=(0, 20))
+        form4.grid_columnconfigure((0, 1), weight=1, uniform="ai")
+        for row, col, key, label in [(0, 0, "ai_base_url", "Địa chỉ máy chủ (URL)"),
+                                     (0, 1, "ai_model", "Model"),
+                                     (1, 0, "ai_api_key", "API key")]:
+            cell = self._field(form4, label)
+            cell.grid(row=row, column=col, sticky="ew", padx=(0, 12 if col == 0 else 0), pady=6)
+            self._widgets[key] = self._entry(cell)
+        self._widgets["ai_api_key"].configure(show="•")
+        test_cell = ctk.CTkFrame(form4, fg_color="transparent")
+        test_cell.grid(row=1, column=1, sticky="sew", pady=6)
+        self._ai_test_btn = button(test_cell, "Kiểm tra kết nối", self._test_ai, width=150)
+        self._ai_test_btn.pack(side="left")
+        self._ai_status = ctk.CTkLabel(test_cell, text="", font=F(12), text_color=C["muted"],
+                                       anchor="w", justify="left", wraplength=320)
+        self._ai_status.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        cell = self._field(form4, "Prompt (yêu cầu gửi cho AI)")
+        cell.grid(row=2, column=0, columnspan=2, sticky="ew", pady=6)
+        self._widgets["ai_prompt"] = self._textbox(cell, 5)
+
         self.load()
 
     # ── Factory ─────────────────────────────────────────────────
@@ -795,6 +833,10 @@ class SettingsPage(ctk.CTkFrame):
         self._set("search_keywords", ", ".join(cfg["feedback_search_keywords"]))
         self._set("skip_keywords", ", ".join(cfg["feedback_skip_keywords"]))
         self._set("skip_patterns", "\n".join(cfg["feedback_skip_patterns"]))
+        self._ai_enabled.set(bool(cfg["ai_enabled"]))
+        for key in ("ai_base_url", "ai_model", "ai_api_key"):
+            self._set(key, cfg[key])
+        self._set("ai_prompt", cfg["ai_prompt"] or ai_summary.DEFAULT_PROMPT)
 
     def _save(self):
         word = {key: self._get(key) for key, _ in self.WORD_FIELDS}
@@ -821,11 +863,39 @@ class SettingsPage(ctk.CTkFrame):
             "skip_keywords": self._get("skip_keywords"),
             "skip_patterns": self._get("skip_patterns"),
         }
+        self.app.settings["ai_config"] = self._ai_values()
         save_settings(self.app.settings)
         e2w.load_settings_into_config()
         self.load()
         self.app.set_status("Đã lưu cấu hình")
         messagebox.showinfo("Đã lưu", "Cấu hình đã được lưu và áp dụng cho các lần xử lý tiếp theo.")
+
+    def _ai_values(self):
+        prompt = self._get("ai_prompt")
+        return {
+            "enabled": self._ai_enabled.get(),
+            "base_url": self._get("ai_base_url"),
+            "api_key": self._get("ai_api_key"),
+            "model": self._get("ai_model"),
+            # Lưu rỗng nếu giữ nguyên prompt mặc định để luôn dùng bản mặc định mới nhất
+            "prompt": "" if prompt == ai_summary.DEFAULT_PROMPT else prompt,
+        }
+
+    def _test_ai(self):
+        v = self._ai_values()
+        cfg = {"ai_base_url": v["base_url"], "ai_api_key": v["api_key"], "ai_model": v["model"]}
+        self._ai_test_btn.configure(state="disabled")
+        self._ai_status.configure(text="Đang kiểm tra…", text_color=C["muted"])
+
+        def work():
+            ok, msg = ai_summary.test_connection(cfg)
+
+            def done():
+                self._ai_test_btn.configure(state="normal")
+                self._ai_status.configure(text=("✅ " if ok else "❌ ") + msg,
+                                          text_color=C["green"] if ok else C["danger"])
+            self.app.post(done)
+        threading.Thread(target=work, daemon=True).start()
 
     def _reset(self):
         if not messagebox.askyesno("Khôi phục mặc định",
@@ -833,6 +903,10 @@ class SettingsPage(ctk.CTkFrame):
             return
         self.app.settings.pop("word_format", None)
         self.app.settings.pop("feedback_config", None)
+        # Giữ lại API key khi khôi phục mặc định
+        key = self.app.settings.pop("ai_config", {}).get("api_key")
+        if key:
+            self.app.settings["ai_config"] = {"api_key": key}
         save_settings(self.app.settings)
         e2w.load_settings_into_config()
         self.load()

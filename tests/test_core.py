@@ -352,3 +352,43 @@ def test_report_current_date_and_chinh_quy_fill(tmp_path):
     assert row_khac[2] == "0"
     assert row_khac[3] == "0.00%"
 
+
+
+def test_ai_summary_replaces_opinion_list(tmp_path, monkeypatch):
+    """Có mạng: Phần 3 là đoạn tóm tắt AI. Lỗi/không mạng: liệt kê ý kiến như cũ."""
+    import ai_summary
+    from docx import Document
+    monkeypatch.setitem(e2w.CONFIG, "ai_enabled", True)
+    monkeypatch.setitem(e2w.CONFIG, "ai_api_key", "test-key")
+
+    monkeypatch.setattr(ai_summary, "_chat",
+                        lambda *a, **k: "**Sinh viên** hài lòng với giảng viên, đề xuất thêm bài tập.")
+    res = e2w.generate_report(SURVEY_FILE_2, str(tmp_path / "ai"))
+    assert res.ok and res.summary_source == "ai"
+    texts = _section3(res.output_path)
+    assert texts[0] == "Sinh viên hài lòng với giảng viên, đề xuất thêm bài tập."
+    assert not any(t.startswith("- ") for t in texts)
+
+    def _offline(*a, **k):
+        raise OSError("no network")
+    monkeypatch.setattr(ai_summary, "_chat", _offline)
+    res = e2w.generate_report(SURVEY_FILE_2, str(tmp_path / "offline"))
+    assert res.ok and res.summary_source == "offline"
+    assert any(t.startswith("- ") for t in _section3(res.output_path))
+
+
+def _section3(path):
+    from docx import Document
+    texts = [p.text for p in Document(path).paragraphs]
+    start = texts.index("Phần 3. Các ý kiến đóng góp từ câu hỏi mở:") + 1
+    end = texts.index("Phần 4. Đề xuất kế hoạch cải tiến:")
+    return [t for t in texts[start:end] if t.strip()]
+
+
+def test_ai_reply_parser_tolerates_trailing_sse_and_streaming():
+    import ai_summary
+    msg = '{"choices":[{"message":{"content":"Đoạn tóm tắt"}}]}'
+    assert ai_summary._parse_reply(msg + "data: [DONE]\n\n") == "Đoạn tóm tắt"
+    sse = ('data: {"choices":[{"delta":{"content":"Đoạn "}}]}\n\n'
+           'data: {"choices":[{"delta":{"content":"tóm tắt"}}]}\n\ndata: [DONE]\n')
+    assert ai_summary._parse_reply(sse) == "Đoạn tóm tắt"

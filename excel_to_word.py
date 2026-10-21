@@ -228,6 +228,14 @@ DEFAULT_CONFIG = {
     ),
     "signer_title": "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN",
     "report_date": "",                           # Ngày lập báo cáo (để trống: tự động lấy ngày hiện tại)
+
+    # AI tóm tắt ý kiến sinh viên (chỉ dùng khi có mạng; lỗi/offline → xử lý như cũ)
+    "ai_enabled": True,
+    "ai_base_url": "https://9router.phongdang.io.vn/v1",
+    "ai_api_key": "",                            # chỉ lưu trong file cấu hình cá nhân
+    "ai_model": "free",
+    "ai_prompt": "",                             # để trống = dùng prompt mặc định (ai_summary.py)
+    "ai_timeout": 60,
 }
 
 CONFIG = copy.deepcopy(DEFAULT_CONFIG)
@@ -253,6 +261,16 @@ _WORD_FORMAT_KEYS = {
     "section_layouts": ("section_layouts", str),
     "signer_title": ("signer_title", str),
     "report_date": ("report_date", str),
+}
+
+# Mục "ai_config": khóa trong file settings → (khóa CONFIG, hàm chuyển kiểu)
+_AI_KEYS = {
+    "enabled": ("ai_enabled", bool),
+    "base_url": ("ai_base_url", str),
+    "api_key": ("ai_api_key", str),
+    "model": ("ai_model", str),
+    "prompt": ("ai_prompt", str),
+    "timeout": ("ai_timeout", float),
 }
 
 # Mục "feedback_config": (khóa CONFIG, ký tự phân tách khi lưu dạng chuỗi)
@@ -283,6 +301,9 @@ def load_settings_into_config():
         for key, (cfg_key, sep) in _FEEDBACK_KEYS.items():
             if key in data.get("feedback_config", {}):
                 CONFIG[cfg_key] = _as_list(data["feedback_config"][key], sep)
+        for key, (cfg_key, cast) in _AI_KEYS.items():
+            if key in data.get("ai_config", {}):
+                CONFIG[cfg_key] = cast(data["ai_config"][key])
     except Exception as e:
         log.warning("Không đọc được cấu hình người dùng: %s", e)
 
@@ -1161,9 +1182,16 @@ def create_word_report(data, output_path):
     add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
                             bold=True, font_size=12, space_after=6)
     
-    # Liệt kê ý kiến thực tế; nếu không có thì ghi "*Không có ý kiến." theo mẫu mới (Hình 3)
+    # Có đoạn tóm tắt AI → in đoạn văn; không có (offline/lỗi) → liệt kê ý kiến như cũ;
+    # không có ý kiến nào → "*Không có ý kiến." theo mẫu mới (Hình 3)
     responses = parse_open_responses(data.get("open_responses", ""))
-    for text in responses or ["*Không có ý kiến."]:
+    summary = data.get("opinion_summary") if responses else None
+    if summary:
+        p_sum = add_formatted_paragraph(doc, summary, space_after=0, space_before=0)
+        p_sum.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p_sum.paragraph_format.first_line_indent = Cm(1.0)
+        responses = [summary]
+    for text in ([] if summary else responses or ["*Không có ý kiến."]):
         p_op = add_formatted_paragraph(doc, f"- {text}" if responses else text,
                                        space_after=0, space_before=0)
         if responses:
@@ -1392,6 +1420,7 @@ class ReportResult:
     missing_total: bool = False
     skipped_sheets: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    summary_source: Optional[str] = None   # "ai" | "offline" | None (không có ý kiến)
 
     @property
     def ok(self) -> bool:
@@ -1471,6 +1500,17 @@ def generate_report(input_path, output_dir=None, on_progress=None):
             result.error = ("Không xác định được Tổng số SV — hãy ghi số SV không tham gia "
                             "ở cuối tên file hoặc điền vào ô F5")
             return result
+
+        opinions = parse_open_responses(data.get("open_responses", ""))
+        if opinions:
+            import ai_summary
+            if ai_summary.is_configured():
+                notify("Đang tóm tắt ý kiến bằng AI…")
+                data["opinion_summary"] = ai_summary.summarize_feedbacks(
+                    opinions, context=f"Học phần: {data['meta'].get('mon_hoc', '')}")
+                result.summary_source = "ai" if data["opinion_summary"] else "offline"
+            else:
+                result.summary_source = "offline"
 
         os.makedirs(out_dir, exist_ok=True)
         output_path = os.path.join(out_dir, f"{out_name}.docx")
