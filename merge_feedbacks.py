@@ -108,6 +108,18 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
 
     doc.add_paragraph(f"Tổng số ý kiến đóng góp: {len(unique_feedbacks)}")
 
+    # ── TÓM TẮT BẰNG AI (khi có mạng; lỗi/offline thì bỏ qua phần này) ──
+    import ai_summary
+    summary = ai_summary.summarize_feedbacks(unique_feedbacks, kind="feedback")
+    if summary:
+        doc.add_paragraph()
+        doc.add_paragraph("TÓM TẮT ĐÁNH GIÁ CỦA SINH VIÊN", style='Heading 2')
+        p_sum = doc.add_paragraph(summary)
+        p_sum.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        print("  🤖 Đã tóm tắt ý kiến bằng AI")
+    elif ai_summary.is_configured():
+        print("  ⚠️ Không kết nối được AI — chỉ phân loại offline")
+
     # ── PHÂN LOẠI Ý KIẾN THEO CHỦ ĐỀ & SẮC THÁI (offline) ──
     try:
         result = fc.classify_feedbacks(unique_feedbacks)

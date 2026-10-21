@@ -90,7 +90,7 @@ Hằng năm, sau mỗi học kỳ, công tác đảm bảo chất lượng giáo
 ```mermaid
 flowchart TD
     subgraph UI["Giao diện người dùng (Presentation Layer)"]
-        GUI["gui_app.py<br/>(Giao diện Tkinter Dark Theme, 3 Tabs)"]
+        GUI["gui_app.py<br/>(Giao diện CustomTkinter, 3 trang)"]
         CLI["excel_to_word.py / merge_feedbacks.py<br/>(Giao diện dòng lệnh CLI)"]
     end
 
@@ -122,7 +122,7 @@ flowchart TD
 
 | Tên tệp | Vai trò và chức năng chính |
 |---|---|
-| [`gui_app.py`](gui_app.py) | Giao diện đồ họa Tkinter (3 tab: Tổng hợp báo cáo, Gộp Feedbacks, Cấu hình). Xử lý đa luồng worker. |
+| [`gui_app.py`](gui_app.py) | Giao diện CustomTkinter (thanh điều hướng + 3 trang: Tổng hợp báo cáo, Gộp Feedbacks, Cấu hình). Xử lý trên luồng nền, cập nhật giao diện qua hàng đợi. |
 | [`excel_to_word.py`](excel_to_word.py) | Trích xuất số liệu khảo sát, tính toán Likert, ghép nhiều sheet và sinh file báo cáo `.docx`. Hỗ trợ cả CLI. |
 | [`merge_feedbacks.py`](merge_feedbacks.py) | Đọc cột ý kiến mở, lọc câu trả lời rác, gọi bộ phân loại và xuất file `Feedbacks.docx`. Hỗ trợ CLI. |
 | [`feedback_classifier.py`](feedback_classifier.py) | Bộ phân loại ý kiến mở theo chủ đề và sắc thái bằng luật từ khóa và ranh giới từ (word boundaries) hoàn toàn offline. |
@@ -248,23 +248,29 @@ File Excel khảo sát sinh viên thường có vùng chứa tiêu đề *"THÔN
 
 ## 7. Đóng gói ứng dụng Standalone
 
-Bạn có thể tự đóng gói phần mềm thành ứng dụng độc lập không cần cài đặt Python:
+### Tải bản build sẵn (khuyến nghị)
+Mỗi lần push lên `main` hoặc mở Pull Request, GitHub Actions ([`build.yml`](.github/workflows/build.yml)) chạy kiểm thử rồi đóng gói:
 
-### Trên macOS (`TongHopKhaoSat.app`)
+| Artifact | Dành cho |
+|---|---|
+| `TongHopKhaoSat-Windows.exe` | Windows 10/11 (1 file, không cần cài Python) |
+| `TongHopKhaoSat-macOS-AppleSilicon.zip` | Mac chip M1/M2/M3/M4 |
+| `TongHopKhaoSat-macOS-Intel.zip` | Mac chip Intel |
+
+Tải tại tab **Actions → lần chạy mới nhất → Artifacts**. Khi gắn tag phiên bản (vd. `git tag v3.0.0 && git push --tags`), workflow tự tạo **GitHub Release** đính kèm cả 3 file.
+
+> macOS: ứng dụng chưa ký bằng Apple Developer ID, lần đầu mở hãy **chuột phải → Open (Mở)**.  
+> Windows: nếu SmartScreen cảnh báo, chọn **More info → Run anyway**.
+
+### Tự đóng gói trên máy
+Cả hai nền tảng dùng chung một file cấu hình [`TongHopKhaoSat.spec`](TongHopKhaoSat.spec):
+
 ```bash
-bash build_mac.sh
+bash build_mac.sh          # macOS → dist/TongHopKhaoSat.app + dist/TongHopKhaoSat-macOS.zip
 ```
-Kết quả được xuất ra tại `dist/TongHopKhaoSat.app`.
-
-### Trên Windows (`TongHopKhaoSat.exe`)
-Chạy tệp batch:
 ```cmd
-build_windows.bat
+build_windows.bat          :: Windows → dist\TongHopKhaoSat.exe
 ```
-Kết quả được xuất ra tại `dist\TongHopKhaoSat.exe`.
-
-### Tự động đóng gói qua GitHub Actions
-Kho lưu trữ đã được tích hợp sẵn quy trình CI/CD qua `.github/workflows/build.yml`. Mỗi khi bạn gắn thẻ (tag) hoặc kích hoạt thủ công (`workflow_dispatch`), GitHub Actions sẽ tự động biên dịch và tạo artifact tải về cho cả macOS và Windows.
 
 ---
 
@@ -273,7 +279,7 @@ Kho lưu trữ đã được tích hợp sẵn quy trình CI/CD qua `.github/wor
 Bộ kiểm thử tự động sử dụng `pytest` kiểm chứng tính toàn vẹn của logic trích xuất, thuật toán thống kê, bộ phân loại NLP và sinh tài liệu Word:
 
 ```bash
-# Chạy toàn bộ 30 test case:
+# Chạy toàn bộ test case:
 python3 -m pytest tests/ -v
 ```
 
@@ -293,28 +299,32 @@ dbcl_tonghop/
 │   └── workflows/
 │       ├── build.yml            # CI/CD tự động build .exe và .app
 │       └── test.yml             # CI/CD chạy kiểm thử tự động trên nhiều OS & phiên bản Python
-├── docs/                        # Tài liệu hướng dẫn & Báo cáo SKKN
-│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx
-│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.pdf
+├── assets/                      # Icon ứng dụng (.ico, .icns, .png)
+├── docs/                        # Tài liệu hướng dẫn & Sáng kiến kinh nghiệm
+│   ├── 2026_PhongDang_Sangkien.docx
+│   ├── Huong_Dan_Su_Dung_Phan_Mem_Tong_Hop_Khao_Sat.docx / .pdf
+│   ├── SKKN_BanThao.md
 │   ├── khao_sat_su_dung.md     # Đánh giá thực tế từ người dùng
 │   ├── tool1_tong_hop_du_lieu.md
 │   └── tool2_gop_feedbacks.md
+├── dulieu/                      # Dữ liệu mẫu phục vụ kiểm thử & thử nghiệm
+│   └── input-feedback/          # File mẫu cho chức năng Gộp Feedbacks
+├── scripts/
+│   └── generate_docx_guideline.py  # Sinh file hướng dẫn sử dụng (.docx) vào docs/
 ├── tests/                       # Bộ kiểm thử tự động (Pytest)
 │   ├── test_core.py             # Kiểm thử tích hợp luồng xử lý chính
 │   ├── test_classifier.py       # Kiểm thử phân loại NLP ý kiến
 │   ├── test_benchmark.py        # Kiểm thử module đo lường hiệu năng
 │   └── test_data_utils.py       # Kiểm thử lớp đọc dữ liệu & xác thực
-├── dulieu/                      # Dữ liệu mẫu phục vụ kiểm thử & thử nghiệm
 ├── app_logging.py               # Hệ thống ghi nhật ký hoạt động có cấu trúc
 ├── benchmark.py                 # Bộ đo thời gian & tính toán hiệu năng
-├── build.spec                   # Cấu hình PyInstaller cho Windows
-├── build_mac.spec               # Cấu hình PyInstaller cho macOS
+├── TongHopKhaoSat.spec          # Cấu hình PyInstaller dùng chung Windows & macOS
 ├── build_mac.sh                 # Script đóng gói tự động cho macOS
 ├── build_windows.bat            # Script đóng gói tự động cho Windows
 ├── data_utils.py                # Lớp SheetReader thống nhất (.xls / .xlsx) & dò cột
 ├── excel_to_word.py             # Trích xuất dữ liệu khảo sát & tạo báo cáo Word
 ├── feedback_classifier.py       # Phân loại ý kiến mở theo chủ đề & sắc thái (NLP offline)
-├── gui_app.py                   # Giao diện đồ họa người dùng (Tkinter)
+├── gui_app.py                   # Giao diện đồ họa người dùng (CustomTkinter)
 ├── merge_feedbacks.py           # Module gộp và làm sạch ý kiến mở
 ├── pyproject.toml               # Cấu hình chuẩn gói Python (PEP 621)
 ├── requirements.txt             # Danh sách thư viện phụ thuộc chính
