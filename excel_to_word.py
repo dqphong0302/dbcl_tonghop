@@ -234,7 +234,8 @@ DEFAULT_CONFIG = {
     "ai_base_url": "https://9router.phongdang.io.vn/v1",
     "ai_api_key": "",                            # chỉ lưu trong file cấu hình cá nhân
     "ai_model": "free",
-    "ai_prompt": "",                             # để trống = dùng prompt mặc định (ai_summary.py)
+    "ai_prompt": "",                             # prompt Phần 3 báo cáo; trống = mặc định (ai_summary.py)
+    "ai_prompt_feedback": "",                    # prompt Feedbacks.docx; trống = mặc định
     "ai_timeout": 60,
 }
 
@@ -270,6 +271,7 @@ _AI_KEYS = {
     "api_key": ("ai_api_key", str),
     "model": ("ai_model", str),
     "prompt": ("ai_prompt", str),
+    "prompt_feedback": ("ai_prompt_feedback", str),
     "timeout": ("ai_timeout", float),
 }
 
@@ -1506,8 +1508,10 @@ def generate_report(input_path, output_dir=None, on_progress=None):
             import ai_summary
             if ai_summary.is_configured():
                 notify("Đang tóm tắt ý kiến bằng AI…")
+                mon_hoc = re.sub(r'^\d+\s*-\s*', '', data["meta"].get("mon_hoc", ""))
                 data["opinion_summary"] = ai_summary.summarize_feedbacks(
-                    opinions, context=f"Học phần: {data['meta'].get('mon_hoc', '')}")
+                    opinions, kind="report",
+                    variables={"mon_hoc": mon_hoc, "lop": data["meta"].get("lop_hoc", "")})
                 result.summary_source = "ai" if data["opinion_summary"] else "offline"
             else:
                 result.summary_source = "offline"

@@ -392,3 +392,24 @@ def test_ai_reply_parser_tolerates_trailing_sse_and_streaming():
     sse = ('data: {"choices":[{"delta":{"content":"Đoạn "}}]}\n\n'
            'data: {"choices":[{"delta":{"content":"tóm tắt"}}]}\n\ndata: [DONE]\n')
     assert ai_summary._parse_reply(sse) == "Đoạn tóm tắt"
+
+
+def test_prompt_placeholders_and_per_target_prompts(monkeypatch):
+    import ai_summary as a
+    filled = a.fill_placeholders("Tóm tắt {so_y_kien} ý kiến lớp {lop} môn {mon_hoc}.",
+                                 {"so_y_kien": 3, "mon_hoc": "GDTC 1"})
+    assert filled == "Tóm tắt 3 ý kiến lớp môn GDTC 1."      # biến thiếu → bỏ trống
+    assert a.fill_placeholders("Giữ {khac} nguyên") == "Giữ {khac} nguyên"
+
+    monkeypatch.setitem(e2w.CONFIG, "ai_prompt", "")
+    monkeypatch.setitem(e2w.CONFIG, "ai_prompt_feedback", "Prompt riêng cho feedback")
+    assert a.get_prompt("report") == a.DEFAULT_PROMPT
+    assert a.get_prompt("feedback") == "Prompt riêng cho feedback"
+
+    seen = {}
+    monkeypatch.setitem(e2w.CONFIG, "ai_enabled", True)
+    monkeypatch.setitem(e2w.CONFIG, "ai_api_key", "k")
+    monkeypatch.setattr(a, "_chat", lambda cfg, msgs, timeout: seen.setdefault("sys", msgs[0]["content"])
+                        or "x" * 30)
+    a.summarize_feedbacks(["Ý kiến A", "Ý kiến B"], kind="feedback")
+    assert seen["sys"] == "Prompt riêng cho feedback"

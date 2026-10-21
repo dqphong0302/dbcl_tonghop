@@ -110,7 +110,7 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
 
     # ── TÓM TẮT BẰNG AI (khi có mạng; lỗi/offline thì bỏ qua phần này) ──
     import ai_summary
-    summary = ai_summary.summarize_feedbacks(unique_feedbacks)
+    summary = ai_summary.summarize_feedbacks(unique_feedbacks, kind="feedback")
     if summary:
         doc.add_paragraph()
         doc.add_paragraph("TÓM TẮT ĐÁNH GIÁ CỦA SINH VIÊN", style='Heading 2')

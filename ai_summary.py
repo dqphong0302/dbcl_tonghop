@@ -12,7 +12,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 try:
     from app_logging import get_logger
@@ -21,14 +21,65 @@ except Exception:
     import logging
     log = logging.getLogger("dbcl")
 
-DEFAULT_PROMPT = (
-    "Bạn là chuyên viên đảm bảo chất lượng giáo dục. Dưới đây là các ý kiến đóng góp "
-    "của sinh viên sau khi kết thúc học phần. Hãy tổng hợp và tóm tắt đánh giá của sinh viên "
-    "thành MỘT đoạn văn tiếng Việt, văn phong hành chính, khách quan (khoảng 80–150 từ): "
-    "nêu những điểm sinh viên hài lòng, những vấn đề/đề xuất được nhắc đến nhiều nhất. "
-    "Bỏ qua các câu trả lời kiểu \"không có ý kiến\". Không bịa thêm thông tin, không dùng "
+_RULES = (
+    " Bỏ qua các câu trả lời kiểu \"không có ý kiến\". Không bịa thêm thông tin, không dùng "
     "gạch đầu dòng hay định dạng markdown, không nêu tên cá nhân."
 )
+
+DEFAULT_PROMPT = (
+    "Bạn là chuyên viên đảm bảo chất lượng giáo dục. Dưới đây là {so_y_kien} ý kiến đóng góp "
+    "của sinh viên sau khi kết thúc học phần {mon_hoc}. Hãy tổng hợp và tóm tắt đánh giá của "
+    "sinh viên thành MỘT đoạn văn tiếng Việt, văn phong hành chính, khách quan (khoảng 80–150 từ): "
+    "nêu những điểm sinh viên hài lòng, những vấn đề/đề xuất được nhắc đến nhiều nhất." + _RULES
+)
+
+DEFAULT_FEEDBACK_PROMPT = (
+    "Bạn là chuyên viên đảm bảo chất lượng giáo dục. Dưới đây là {so_y_kien} ý kiến đóng góp "
+    "của sinh viên, gộp từ nhiều lớp/học phần. Hãy tổng hợp thành MỘT đoạn văn tiếng Việt, "
+    "văn phong hành chính, khách quan (khoảng 120–200 từ): nhận xét chung, các nhóm vấn đề "
+    "được phản ánh nhiều nhất (giảng viên, nội dung, lượng giá, thời lượng, cơ sở vật chất...) "
+    "và các đề xuất cải tiến chính." + _RULES
+)
+
+DEFAULT_PROMPTS = {"report": DEFAULT_PROMPT, "feedback": DEFAULT_FEEDBACK_PROMPT}
+
+# Mẫu prompt chọn nhanh trong trang Cấu hình
+PRESETS = {
+    "Đoạn văn hành chính (mặc định)": DEFAULT_PROMPT,
+    "Ngắn gọn 2–3 câu": (
+        "Tóm tắt {so_y_kien} ý kiến của sinh viên về học phần {mon_hoc} thành 2–3 câu tiếng Việt "
+        "ngắn gọn, khách quan: mức độ hài lòng chung và vấn đề nổi bật nhất." + _RULES),
+    "Điểm mạnh – Hạn chế – Đề xuất": (
+        "Bạn là chuyên viên đảm bảo chất lượng. Từ {so_y_kien} ý kiến của sinh viên về học phần "
+        "{mon_hoc}, viết MỘT đoạn văn tiếng Việt (100–180 từ) lần lượt nêu: điểm mạnh được sinh viên "
+        "ghi nhận, các hạn chế/vấn đề còn tồn tại, và đề xuất cải tiến cụ thể cho bộ môn." + _RULES),
+    "Báo cáo gửi Bộ môn (có định lượng)": (
+        "Viết MỘT đoạn văn tiếng Việt văn phong báo cáo gửi Bộ môn, tổng hợp {so_y_kien} ý kiến "
+        "của sinh viên lớp {lop} về học phần {mon_hoc}. Dùng các cụm định lượng ước lượng như "
+        "\"đa số\", \"một số\", \"ít\" sinh viên khi nêu từng nhận xét; kết thúc bằng 1 câu "
+        "kiến nghị." + _RULES),
+}
+
+PLACEHOLDERS = {
+    "{mon_hoc}": "tên học phần",
+    "{lop}": "mã lớp",
+    "{so_y_kien}": "số ý kiến",
+}
+
+
+def fill_placeholders(prompt: str, variables: Optional[Dict[str, str]] = None) -> str:
+    """Thay {mon_hoc}, {lop}, {so_y_kien}… — chỉ thay biến đã biết, giữ nguyên ngoặc khác."""
+    for key, value in (variables or {}).items():
+        prompt = prompt.replace("{" + key + "}", str(value))
+    for ph in PLACEHOLDERS:          # biến không có dữ liệu → bỏ trống
+        prompt = prompt.replace(ph, "")
+    return re.sub(r"[ \t]{2,}", " ", prompt).replace(" .", ".").strip()
+
+
+def get_prompt(kind: str = "report", cfg=None) -> str:
+    cfg = cfg or _config()
+    key = "ai_prompt" if kind == "report" else "ai_prompt_feedback"
+    return (cfg.get(key) or "").strip() or DEFAULT_PROMPTS[kind]
 
 
 def _config():
@@ -84,28 +135,39 @@ def _clean_paragraph(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def summarize_feedbacks(opinions: List[str], context: str = "") -> Optional[str]:
-    """Trả về đoạn văn tóm tắt, hoặc None nếu AI tắt / lỗi / không có mạng."""
+def summarize_feedbacks(opinions: List[str], kind: str = "report",
+                        variables: Optional[Dict[str, str]] = None,
+                        prompt: Optional[str] = None) -> Optional[str]:
+    """Trả về đoạn văn tóm tắt, hoặc None nếu AI tắt / lỗi / không có mạng.
+
+    kind: "report" (Phần 3 báo cáo) hoặc "feedback" (Feedbacks.docx) — chọn prompt tương ứng.
+    prompt: truyền vào để thử prompt chưa lưu (nút "Thử prompt" trong Cấu hình).
+    """
     cfg = _config()
     if not opinions or not is_configured(cfg):
         return None
-    prompt = (cfg.get("ai_prompt") or "").strip() or DEFAULT_PROMPT
-    listing = "\n".join(f"- {o}" for o in opinions)
-    user = (f"{context}\n\n" if context else "") + f"Các ý kiến của sinh viên:\n{listing}"
     try:
-        content = _chat(cfg, [{"role": "system", "content": prompt},
-                              {"role": "user", "content": user}],
-                        timeout=float(cfg.get("ai_timeout", 60)))
-        summary = _clean_paragraph(content)
-        if len(summary) < 20:
-            log.warning("AI trả về nội dung quá ngắn, dùng cách xử lý offline")
-            return None
-        log.info("AI (%s) đã tóm tắt %d ý kiến", cfg["ai_model"], len(opinions))
-        return summary
+        return run_summary(cfg, opinions, prompt or get_prompt(kind, cfg), variables)
     except Exception as e:
         log.warning("Không dùng được AI (%s) — chuyển sang xử lý offline: %s",
                     cfg.get("ai_model"), _describe_error(e))
         return None
+
+
+def run_summary(cfg, opinions: List[str], prompt: str,
+                variables: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Gọi AI tóm tắt; ném lỗi nếu gọi thất bại (dùng cho nút Thử prompt để hiện lỗi)."""
+    variables = {"so_y_kien": len(opinions), **(variables or {})}
+    listing = "\n".join(f"- {o}" for o in opinions)
+    content = _chat(cfg, [{"role": "system", "content": fill_placeholders(prompt, variables)},
+                          {"role": "user", "content": f"Các ý kiến của sinh viên:\n{listing}"}],
+                    timeout=float(cfg.get("ai_timeout", 60)))
+    summary = _clean_paragraph(content)
+    if len(summary) < 20:
+        log.warning("AI trả về nội dung quá ngắn, dùng cách xử lý offline")
+        return None
+    log.info("AI (%s) đã tóm tắt %d ý kiến", cfg["ai_model"], len(opinions))
+    return summary
 
 
 def _describe_error(e: Exception) -> str:

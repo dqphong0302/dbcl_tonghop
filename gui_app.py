@@ -769,9 +769,15 @@ class SettingsPage(ctk.CTkFrame):
         self._ai_status = ctk.CTkLabel(test_cell, text="", font=F(12), text_color=C["muted"],
                                        anchor="w", justify="left", wraplength=320)
         self._ai_status.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        cell = self._field(form4, "Prompt (yêu cầu gửi cho AI)")
-        cell.grid(row=2, column=0, columnspan=2, sticky="ew", pady=6)
-        self._widgets["ai_prompt"] = self._textbox(cell, 5)
+        placeholders = ", ".join(f"{k} = {v}" for k, v in ai_summary.PLACEHOLDERS.items())
+        ctk.CTkLabel(form4, text=f"Biến dùng được trong prompt: {placeholders}",
+                     font=F(11), text_color=C["muted"], anchor="w").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        for row, kind, key, label in [
+            (3, "report", "ai_prompt", "Prompt cho Phần 3 báo cáo (mỗi học phần)"),
+            (4, "feedback", "ai_prompt_feedback", "Prompt cho Feedbacks.docx (gộp nhiều file)"),
+        ]:
+            self._prompt_editor(form4, row, kind, key, label)
 
         self.load()
 
@@ -795,7 +801,7 @@ class SettingsPage(ctk.CTkFrame):
     def _textbox(self, parent, lines):
         t = ctk.CTkTextbox(parent, height=24 * lines + 14, corner_radius=8, border_width=2,
                            border_color=C["border"], fg_color=C["card_alt"],
-                           text_color=C["text"], font=F(13))
+                           text_color=C["text"], font=F(13), wrap="word")
         t.pack(fill="x")
         return t
 
@@ -836,7 +842,8 @@ class SettingsPage(ctk.CTkFrame):
         self._ai_enabled.set(bool(cfg["ai_enabled"]))
         for key in ("ai_base_url", "ai_model", "ai_api_key"):
             self._set(key, cfg[key])
-        self._set("ai_prompt", cfg["ai_prompt"] or ai_summary.DEFAULT_PROMPT)
+        self._set("ai_prompt", ai_summary.get_prompt("report", cfg))
+        self._set("ai_prompt_feedback", ai_summary.get_prompt("feedback", cfg))
 
     def _save(self):
         word = {key: self._get(key) for key, _ in self.WORD_FIELDS}
@@ -871,15 +878,99 @@ class SettingsPage(ctk.CTkFrame):
         messagebox.showinfo("Đã lưu", "Cấu hình đã được lưu và áp dụng cho các lần xử lý tiếp theo.")
 
     def _ai_values(self):
-        prompt = self._get("ai_prompt")
+        def prompt(kind, key):
+            # Lưu rỗng nếu giữ nguyên prompt mặc định để luôn dùng bản mặc định mới nhất
+            text = self._get(key)
+            return "" if text == ai_summary.DEFAULT_PROMPTS[kind] else text
         return {
             "enabled": self._ai_enabled.get(),
             "base_url": self._get("ai_base_url"),
             "api_key": self._get("ai_api_key"),
             "model": self._get("ai_model"),
-            # Lưu rỗng nếu giữ nguyên prompt mặc định để luôn dùng bản mặc định mới nhất
-            "prompt": "" if prompt == ai_summary.DEFAULT_PROMPT else prompt,
+            "prompt": prompt("report", "ai_prompt"),
+            "prompt_feedback": prompt("feedback", "ai_prompt_feedback"),
         }
+
+    def _prompt_editor(self, parent, row, kind, key, label):
+        """Ô soạn prompt kèm: chọn mẫu có sẵn, khôi phục mặc định, thử prompt."""
+        cell = ctk.CTkFrame(parent, fg_color="transparent")
+        cell.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(12, 6))
+        bar = ctk.CTkFrame(cell, fg_color="transparent")
+        bar.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(bar, text=label, font=F(12, "bold"), text_color=C["text"]).pack(side="left")
+        button(bar, "▶ Thử prompt", lambda: self._try_prompt(kind, key), width=110,
+               height=30).pack(side="right")
+        button(bar, "Mặc định", lambda: self._set(key, ai_summary.DEFAULT_PROMPTS[kind]),
+               kind="ghost", width=80, height=30).pack(side="right", padx=(0, 6))
+        preset = ctk.CTkOptionMenu(
+            bar, values=list(ai_summary.PRESETS), height=30, width=230, corner_radius=8,
+            fg_color=C["card_alt"], button_color=C["accent"], button_hover_color=C["accent_hover"],
+            text_color=C["text"], font=F(12), dropdown_font=F(12),
+            command=lambda name: self._set(key, ai_summary.PRESETS[name]))
+        preset.set("Chọn mẫu prompt có sẵn…")
+        preset.pack(side="right", padx=(0, 6))
+        self._widgets[key] = self._textbox(cell, 5)
+
+    def _sample_opinions(self, kind):
+        """Ý kiến thật từ file đang chọn ở trang tương ứng; không có thì dùng dữ liệu mẫu."""
+        page = self.app._pages["report" if kind == "report" else "feedback"]
+        for path in page.file_list.files:
+            try:
+                if kind == "feedback":
+                    from merge_feedbacks import extract_feedbacks
+                    ops = extract_feedbacks(path)
+                    name = os.path.basename(path)
+                else:
+                    n, _ = e2w.get_sheet_count(path)
+                    ops, name = [], ""
+                    for si in range(n):
+                        d = e2w.extract_data_from_excel(path, si, apply_filename_suffix=False)
+                        ops += e2w.parse_open_responses(d.get("open_responses", ""))
+                        name = re.sub(r"^\d+\s*-\s*", "", d["meta"].get("mon_hoc", "")) or name
+                if ops:
+                    return ops[:80], {"mon_hoc": name, "lop": ""}, os.path.basename(path)
+            except Exception:
+                continue
+        sample = ["Thầy giảng dạy nhiệt tình, dễ hiểu.", "Sân tập nắng quá, mong có mái che.",
+                  "Cần thêm tài liệu và bài tập để ôn thi.", "Lịch học dày, cuối buổi rất mệt.",
+                  "Môn học bổ ích, không khí lớp vui vẻ."]
+        return sample, {"mon_hoc": "Giáo dục thể chất 1", "lop": "CTXH26"}, "dữ liệu mẫu"
+
+    def _try_prompt(self, kind, key):
+        v = self._ai_values()
+        cfg = {"ai_base_url": v["base_url"], "ai_api_key": v["api_key"], "ai_model": v["model"],
+               "ai_timeout": e2w.CONFIG.get("ai_timeout", 60)}
+        if not (cfg["ai_base_url"] and cfg["ai_api_key"] and cfg["ai_model"]):
+            messagebox.showwarning("Thiếu cấu hình AI", "Hãy nhập URL, API key và model trước.")
+            return
+        prompt = self._get(key)
+        opinions, variables, source = self._sample_opinions(kind)
+        win = ctk.CTkToplevel(self)
+        win.title("Thử prompt")
+        win.geometry("720x480")
+        win.configure(fg_color=C["bg"])
+        win.transient(self.winfo_toplevel())
+        ctk.CTkLabel(win, text=f"Kết quả thử với {len(opinions)} ý kiến từ: {source}",
+                     font=F(13, "bold"), text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 8))
+        out = ctk.CTkTextbox(win, wrap="word", font=F(13), fg_color=C["card"], text_color=C["text"],
+                             border_width=1, border_color=C["border"], corner_radius=10)
+        out.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        out.insert("1.0", f"Đang gọi model “{cfg['ai_model']}”…")
+
+        def work():
+            try:
+                text = ai_summary.run_summary(cfg, opinions, prompt, variables) or \
+                    "(AI trả về nội dung quá ngắn — hãy chỉnh lại prompt.)"
+            except Exception as e:
+                text = f"❌ Lỗi: {ai_summary._describe_error(e)}\n\nKhi chạy thật, phần mềm sẽ " \
+                       "tự quay về xử lý offline."
+
+            def show():
+                if win.winfo_exists():
+                    out.delete("1.0", "end")
+                    out.insert("1.0", text)
+            self.app.post(show)
+        threading.Thread(target=work, daemon=True).start()
 
     def _test_ai(self):
         v = self._ai_values()
