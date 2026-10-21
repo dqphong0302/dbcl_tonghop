@@ -6,7 +6,7 @@ Module gộp và phân loại ý kiến đóng góp mở từ nhiều file khả
 import sys
 import os
 import argparse
-from typing import List, Optional
+from typing import Callable, List, Optional
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -18,7 +18,13 @@ import feedback_classifier as fc
 log = get_logger()
 
 
-def extract_feedbacks(filepath: str) -> List[str]:
+def _is_survey_summary(sheet) -> bool:
+    """Sheet thống kê kết quả khảo sát (có mục "Thông tin khảo sát" ở cột A)."""
+    return any(str(sheet.cell_value(r, 0)).strip() == "Thông tin khảo sát"
+               for r in range(min(80, sheet.nrows)))
+
+
+def extract_feedbacks(filepath: str, raise_errors: bool = False) -> List[str]:
     """Trích xuất ý kiến mở từ file feedback (.xls/.xlsx).
 
     Dò cột feedback TỰ ĐỘNG theo tiêu đề (không hard-code index 36),
@@ -33,8 +39,19 @@ def extract_feedbacks(filepath: str) -> List[str]:
                                     "chưa có", "không có ý kiến", "không có ý kiến gì"])
         skip_keywords_lower = [k.lower() for k in skip_keywords]
 
-        for sheet in wb.sheets:
+        for si, sheet in enumerate(wb.sheets):
             if sheet.nrows == 0:
+                continue
+
+            # File THỐNG KÊ khảo sát (không phải file ý kiến thô): lấy đúng ô câu hỏi mở,
+            # tránh đọc nhầm cột số liệu ("133.0", "Tổng cộng") thành ý kiến.
+            if _is_survey_summary(sheet):
+                from excel_to_word import extract_data_from_excel
+                data = extract_data_from_excel(filepath, sheet_index=si, apply_filename_suffix=False)
+                responses = parse_open_responses(data.get("open_responses", ""))
+                feedbacks.extend(responses)
+                log.info("Đọc ý kiến mở từ file thống kê '%s' [%s]: %d ý kiến",
+                         os.path.basename(filepath), sheet.name, len(responses))
                 continue
 
             feedback_col_idx, start_row = detect_feedback_column(sheet, search_keywords)
@@ -52,12 +69,25 @@ def extract_feedbacks(filepath: str) -> List[str]:
             log.info("  -> %d ý kiến hợp lệ từ sheet '%s'", sheet_count, sheet.name)
     except Exception as e:
         log.error("Lỗi đọc file %s: %s", filepath, e)
-        print(f"  ❌ Lỗi đọc file {filepath}: {e}")
+        if raise_errors:
+            raise
+        print(f"  ❌ Lỗi đọc file {os.path.basename(filepath)}: {e}")
     return feedbacks
 
 
-def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) -> Optional[str]:
-    """Gộp ý kiến mở từ nhiều file khảo sát, phân loại theo chủ đề/sắc thái và xuất ra Word."""
+def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None,
+                    on_progress: Optional[Callable[[str, str], None]] = None) -> Optional[str]:
+    """Gộp ý kiến mở từ nhiều file khảo sát, phân loại theo chủ đề/sắc thái và xuất ra Word.
+
+    on_progress(msg, level): nhận thông báo từng file ("info" | "warning" | "error").
+    Trả về đường dẫn Feedbacks.docx, hoặc None nếu không có ý kiến hợp lệ.
+    Ném PermissionError (thông điệp tiếng Việt) nếu không ghi được file kết quả.
+    """
+    def notify(msg, level="info"):
+        print(f"  {msg}")
+        if on_progress:
+            on_progress(msg, level)
+
     if not input_files:
         return None
     
@@ -67,8 +97,13 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
     
     all_feedbacks = []
     for filepath in input_files:
-        print(f"  📄 Đang đọc feedbacks từ: {os.path.basename(filepath)}")
-        fb = extract_feedbacks(filepath)
+        name = os.path.basename(filepath)
+        try:
+            fb = extract_feedbacks(filepath, raise_errors=True)
+        except Exception as e:
+            notify(f"❌ {name}: {e}", "error")
+            continue
+        notify(f"📄 {name}: {len(fb)} ý kiến", "info" if fb else "warning")
         all_feedbacks.extend(fb)
         
     # Loại bỏ trùng lặp nếu cần
@@ -116,9 +151,9 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
         doc.add_paragraph("TÓM TẮT ĐÁNH GIÁ CỦA SINH VIÊN", style='Heading 2')
         p_sum = doc.add_paragraph(summary)
         p_sum.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        print("  🤖 Đã tóm tắt ý kiến bằng AI")
+        notify("🤖 Đã tóm tắt ý kiến bằng AI")
     elif ai_summary.is_configured():
-        print("  ⚠️ Không kết nối được AI — chỉ phân loại offline")
+        notify("📴 Không kết nối được AI — chỉ phân loại offline như cũ", "warning")
 
     # ── PHÂN LOẠI Ý KIẾN THEO CHỦ ĐỀ & SẮC THÁI (offline) ──
     try:
@@ -155,7 +190,11 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
             p = doc.add_paragraph(f"{i}. {fb}")
             p.paragraph_format.space_after = Pt(6)
 
-    doc.save(output_path)
+    try:
+        doc.save(output_path)
+    except PermissionError:
+        raise PermissionError(f"Không ghi được “{os.path.basename(output_path)}” — file đang mở "
+                              "trong Word? Hãy đóng file rồi chạy lại") from None
     log.info("Đã lưu %d feedbacks vào %s", len(unique_feedbacks), os.path.basename(output_path))
     print(f"  ✅ Đã lưu {len(unique_feedbacks)} feedbacks vào {os.path.basename(output_path)}")
     return output_path
@@ -163,6 +202,8 @@ def merge_feedbacks(input_files: List[str], output_dir: Optional[str] = None) ->
 
 def main():
     """Hàm chạy dòng lệnh (CLI)."""
+    from excel_to_word import _safe_console
+    _safe_console()
     parser = argparse.ArgumentParser(description="Gộp và phân loại feedbacks từ nhiều file Excel khảo sát")
     parser.add_argument("files", nargs="*", help="Danh sách file Excel (.xls/.xlsx)")
     parser.add_argument("--output-dir", "-o", help="Thư mục lưu file Feedbacks.docx kết quả")

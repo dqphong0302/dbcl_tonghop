@@ -3,9 +3,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=white" alt="Python Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-informational?logo=apple&logoColor=white" alt="Platform" />
-  <img src="https://img.shields.io/badge/Tests-30%20passed-success?logo=pytest&logoColor=white" alt="Pytest" />
+  <a href="https://github.com/dqphong0302/dbcl_tonghop/releases/latest"><img src="https://img.shields.io/github/v/release/dqphong0302/dbcl_tonghop?label=T%E1%BA%A3i%20v%E1%BB%81&logo=github" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/Tests-pytest-success?logo=pytest&logoColor=white" alt="Pytest" />
   <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white" alt="CI/CD" />
-  <img src="https://img.shields.io/badge/Privacy-100%25%20Offline%20Local-success" alt="Privacy" />
+  <img src="https://img.shields.io/badge/Privacy-Offline%20m%E1%BA%B7c%20%C4%91%E1%BB%8Bnh-success" alt="Privacy" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
 </p>
 
@@ -13,6 +14,34 @@
 
 > **Đơn vị phát triển:** Khoa Khoa học Cơ bản – Đại học Y Dược TP. Hồ Chí Minh  
 > **Tác giả:** Đặng Quốc Phong ([@dqphong0302](https://github.com/dqphong0302))
+
+---
+
+## ⬇️ Tải về & sử dụng ngay (phiên bản 3.0.0)
+
+Không cần cài Python — tải đúng file cho máy của bạn tại trang **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)**:
+
+| Máy tính | File tải về | Cách mở |
+|---|---|---|
+| **Windows 10/11** | [TongHopKhaoSat-Windows.exe](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-Windows.exe) | Bấm đúp vào file `.exe` |
+| **Mac chip Apple** (M1/M2/M3/M4) | [TongHopKhaoSat-macOS-AppleSilicon.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-macOS-AppleSilicon.zip) | Giải nén → mở `TongHopKhaoSat.app` |
+| **Mac chip Intel** | [TongHopKhaoSat-macOS-Intel.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-macOS-Intel.zip) | Giải nén → mở `TongHopKhaoSat.app` |
+
+> Không biết Mac của mình dùng chip gì? Vào ** → Giới thiệu về máy Mac này**: dòng *Chip: Apple M…* → bản Apple; dòng *Bộ xử lý: Intel…* → bản Intel.
+
+**Lần đầu mở ứng dụng** (phần mềm chưa ký số thương mại nên hệ điều hành sẽ hỏi):
+- **Windows:** nếu hiện "Windows protected your PC" → bấm **More info → Run anyway**.
+- **macOS:** **chuột phải** vào `TongHopKhaoSat.app` → **Open (Mở)** → **Open**. Nếu vẫn bị chặn, mở Terminal và chạy
+  `xattr -cr /đường/dẫn/TongHopKhaoSat.app`.
+
+**Ba bước sử dụng:**
+1. Trang **Tổng hợp báo cáo** → **Thêm file** (hoặc **Thêm thư mục**) chọn file Excel khảo sát.
+2. Chọn **Thư mục lưu kết quả** (để trống = thư mục `output` cạnh file Excel).
+3. Bấm **▶ Tạo báo cáo** → bấm **Mở thư mục kết quả** để xem file Word.
+
+**Tùy chọn — AI tóm tắt ý kiến sinh viên:** vào **Cấu hình → AI tóm tắt ý kiến sinh viên**, nhập API key và model,
+bấm **Kiểm tra kết nối** rồi **Lưu cấu hình**. Khi có mạng, Phần 3 báo cáo và `Feedbacks.docx` có đoạn văn tóm tắt;
+không có mạng hoặc AI lỗi, phần mềm tự xử lý offline như bình thường. Bản tải về **không kèm API key**.
 
 ---
 
@@ -76,8 +105,9 @@ Hằng năm, sau mỗi học kỳ, công tác đảm bảo chất lượng giáo
   - Thời lượng & Tổ chức lớp học
 - **Phân loại sắc thái (Sentiment Analysis):** Nhận diện sắc thái biểu cảm: *Tích cực (Khen ngợi)*, *Góp ý (Đề xuất cải tiến)*, hoặc *Trung tính*.
 - **Xuất file Feedbacks.docx:** Trình bày bảng tổng hợp tỷ lệ phần trăm theo chủ đề/sắc thái và danh sách chi tiết các ý kiến đã phân loại.
+- **AI tóm tắt thành đoạn văn (tùy chọn, cần mạng):** gọi API tương thích OpenAI (vd. 9router) để tổng hợp ý kiến thành một đoạn văn cho Phần 3 báo cáo và `Feedbacks.docx`; prompt tùy chỉnh được, có mẫu sẵn và nút thử. Mất mạng → tự động quay về xử lý offline.
 
-### ⚙️ 3. Giao diện Tkinter hiện đại & Đo lường hiệu quả
+### ⚙️ 3. Giao diện CustomTkinter hiện đại & Đo lường hiệu quả
 - **Giao diện đa luồng (Multi-threaded GUI):** Không bị treo máy khi xử lý hàng loạt hàng chục file cùng lúc.
 - **Bảng điều khiển Cấu hình (Settings Tab):** Tùy biến linh hoạt tiêu đề trường, tên khoa, quốc hiệu, cỡ chữ, phông chữ Times New Roman, lề trang, màu sắc bảng mà không cần can thiệp code.
 - **Đo lường thời gian thực (Benchmarking):** Tính toán ngay sau khi chạy: thời gian chạy thực tế, số phút tiết kiệm được và hệ số tăng năng suất.
@@ -257,7 +287,12 @@ Mỗi lần push lên `main` hoặc mở Pull Request, GitHub Actions ([`build.y
 | `TongHopKhaoSat-macOS-AppleSilicon.zip` | Mac chip M1/M2/M3/M4 |
 | `TongHopKhaoSat-macOS-Intel.zip` | Mac chip Intel |
 
-Tải tại tab **Actions → lần chạy mới nhất → Artifacts**. Khi gắn tag phiên bản (vd. `git tag v3.0.0 && git push --tags`), workflow tự tạo **GitHub Release** đính kèm cả 3 file.
+Bản phát hành chính thức: **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)** (xem mục [Tải về](#️-tải-về--sử-dụng-ngay-phiên-bản-300) ở đầu trang). Bản build thử của từng commit/PR: tab **Actions → lần chạy → Artifacts**.
+
+Phát hành phiên bản mới: gắn tag rồi đẩy lên, workflow tự build và tạo Release đính kèm cả 3 file:
+```bash
+git tag -a v3.0.1 -m "Tổng hợp Khảo sát v3.0.1" && git push origin v3.0.1
+```
 
 > macOS: ứng dụng chưa ký bằng Apple Developer ID, lần đầu mở hãy **chuột phải → Open (Mở)**.  
 > Windows: nếu SmartScreen cảnh báo, chọn **More info → Run anyway**.
@@ -339,8 +374,9 @@ dbcl_tonghop/
 
 ## 10. Quyền riêng tư & Bảo mật dữ liệu
 
-- **Hoàn toàn Offline (Local-First):** Toàn bộ quy trình xử lý dữ liệu khảo sát và phân loại phản hồi sinh viên được thực thi 100% trên CPU máy tính người dùng.
-- **Không gửi dữ liệu ra bên ngoài:** Phần mềm không sử dụng bất kỳ kết nối mạng hay dịch vụ AI trên đám mây nào, bảo đảm an toàn dữ liệu học vụ và quyền riêng tư của người học theo đúng quy định giáo dục.
+- **Offline mặc định (Local-First):** Đọc Excel, tính toán, tạo báo cáo và phân loại ý kiến đều chạy hoàn toàn trên máy người dùng.
+- **AI là tùy chọn:** Chỉ khi người dùng **bật AI và nhập API key** trong Cấu hình, phần mềm mới gửi **nội dung các ý kiến mở** (không gửi họ tên, mã SV hay số liệu điểm) tới máy chủ AI đã cấu hình để tóm tắt. Tắt công tắc "Bật AI" để không gửi bất kỳ dữ liệu nào ra ngoài.
+- **API key** chỉ lưu trong file cấu hình cá nhân trên máy (`~/.dbcl_tonghop_settings.json`), không nằm trong mã nguồn hay bản tải về.
 - **Minh bạch:** Mã nguồn mở hoàn toàn, có thể kiểm tra từng dòng lệnh xử lý dữ liệu.
 
 ---
