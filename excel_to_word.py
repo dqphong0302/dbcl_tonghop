@@ -17,6 +17,7 @@ import os
 import glob
 import argparse
 import re
+from datetime import datetime
 import xlrd
 from docx import Document
 from docx.shared import Pt, Cm, Inches, RGBColor
@@ -226,6 +227,7 @@ DEFAULT_CONFIG = {
         "IV. CẢM NHẬN CHUNG | 16-19"
     ),
     "signer_title": "TRƯỞNG MODULE/TRƯỞNG BỘ MÔN",
+    "report_date": "",                           # Ngày lập báo cáo (để trống: tự động lấy ngày hiện tại)
 }
 
 CONFIG = copy.deepcopy(DEFAULT_CONFIG)
@@ -250,6 +252,7 @@ _WORD_FORMAT_KEYS = {
     "open_response_lines": ("open_response_lines", int),
     "section_layouts": ("section_layouts", str),
     "signer_title": ("signer_title", str),
+    "report_date": ("report_date", str),
 }
 
 # Mục "feedback_config": (khóa CONFIG, ký tự phân tách khi lưu dạng chuỗi)
@@ -407,7 +410,11 @@ def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True)
             
         # --- THÔNG TIN NỀN ---
         if section == "thong_tin_chung":
-            if col0.startswith("C") and ":" in col0 and col1 == "Số SV trả lời":
+            is_bg_row = False
+            if col0.startswith("C") and ":" in col0:
+                if col1 == "Số SV trả lời" or any(k in col0.lower() for k in ["hình thức", "giới tính", "dân tộc", "nước ngoài"]):
+                    is_bg_row = True
+            if is_bg_row:
                 # Extract question label
                 label = col0.split(":", 1)[1].strip() if ":" in col0 else col0
                 
@@ -420,7 +427,7 @@ def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True)
                     except (ValueError, TypeError):
                         values.append(0)
                 
-                # Get percentages from next row
+                # Get percentages from next row if available
                 if r + 1 < sheet.nrows and str(sheet.cell(r + 1, 1).value).strip() == "Tỷ lệ":
                     percentages = []
                     for c in range(2, sheet.ncols):
@@ -430,7 +437,8 @@ def extract_data_from_excel(filepath, sheet_index=0, apply_filename_suffix=True)
                         except (ValueError, TypeError):
                             percentages.append(0)
                 else:
-                    percentages = []
+                    tot = sum(values[:2]) if len(values) >= 2 else sum(values)
+                    percentages = [v / tot for v in values] if tot > 0 else [0.0] * len(values)
                 
                 data["background_info"].append({
                     "label": label,
@@ -832,8 +840,10 @@ def create_word_report(data, output_path):
     run2.font.size = Pt(12)
     run2._element.rPr.rFonts.set(qn('w:eastAsia'), CONFIG["font_name"])
     
-    # Ngày tháng năm
-    date_text = data["signer_date"] if data["signer_date"] else "Thành phố Hồ Chí Minh, ngày ... tháng ... năm ..."
+    # Ngày tháng năm báo cáo (mặc định lấy ngày hiện tại khi xuất báo cáo)
+    now = datetime.now()
+    default_date = f"TP. HCM, ngày {now.day:02d} tháng {now.month:02d} năm {now.year}"
+    date_text = data.get("report_date") or CONFIG.get("report_date") or default_date
     p3 = right_cell.add_paragraph()
     p3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     run3 = p3.add_run(date_text)
@@ -989,9 +999,12 @@ def create_word_report(data, output_path):
             "Sinh viên nước ngoài": {"labels": ["Có", "Không"], "col_indices": [0, 1]},
         }
         
-        # Luôn in đủ các nhóm theo mẫu; nhóm không có trong Excel để trống số liệu
+        # Luôn in đủ các nhóm theo mẫu; nhóm không có trong Excel được xử lý phù hợp
         def _find_bg(key):
             return next((it for it in bg if key.lower() in it["label"].lower()), None)
+
+        if total_phieu == 0 and bg and len(bg[0].get("counts", [])) > 0:
+            total_phieu = int(sum(bg[0]["counts"][:2]))
 
         for key, mapping in bg_mapping.items():
             item = _find_bg(key)
@@ -1006,6 +1019,14 @@ def create_word_report(data, output_path):
                     counts, pcts = item["counts"], item["percentages"]
                     count_txt = str(int(counts[idx])) if idx < len(counts) else "0"
                     pct_txt = f"{(pcts[idx] * 100 if idx < len(pcts) else 0):.2f}%"
+                elif key == "Hình thức đào tạo":
+                    # Mẫu phiếu mới không có câu hỏi hình thức đào tạo; tất cả sinh viên khảo sát đều thuộc hệ Chính quy
+                    if sub_label == "Chính quy":
+                        count_txt = str(total_phieu)
+                        pct_txt = "100.00%" if total_phieu > 0 else "0.00%"
+                    else:
+                        count_txt = "0"
+                        pct_txt = "0.00%"
                 format_cell_text(row.cells[2], count_txt, font_size=11,
                                  alignment=WD_ALIGN_PARAGRAPH.CENTER)
                 format_cell_text(row.cells[3], pct_txt, font_size=11,

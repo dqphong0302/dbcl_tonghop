@@ -314,3 +314,41 @@ def test_build_sections_2627_template_form():
     nums = [str(i) for i in range(1, 11)] + ["11.1", "11.2", "11.3", "11.4"] + [str(i) for i in range(12, 20)]
     secs = e2w.build_sections([{"number": n} for n in nums])
     assert [(s["start"], s["end"]) for s in secs] == [(0, 10), (10, 14), (14, 18), (18, 22)]
+
+
+@pytest.mark.skipif(not os.path.exists(NEW_SURVEY_FILE), reason="thiếu file mẫu mới 2627")
+def test_report_current_date_and_chinh_quy_fill(tmp_path):
+    """Kiểm tra: ngày báo cáo là ngày hiện tại, và tự động điền Chính quy (100%) khi Excel không có."""
+    from docx import Document
+    from datetime import datetime
+
+    data = e2w.extract_data_from_excel(NEW_SURVEY_FILE)
+    # File Excel gốc có ngày 20/10/2026
+    assert "20 tháng 10" in data.get("signer_date", "")
+
+    out = os.path.join(str(tmp_path), "test_current_date.docx")
+    e2w.create_word_report(data, out)
+    assert os.path.exists(out)
+
+    doc = Document(out)
+    
+    # 1. Kiểm tra ngày báo cáo lấy ngày hiện tại
+    now = datetime.now()
+    expected_date = f"TP. HCM, ngày {now.day:02d} tháng {now.month:02d} năm {now.year}"
+    header_right_cell_text = doc.tables[0].cell(0, 1).text
+    assert expected_date in header_right_cell_text
+
+    # 2. Kiểm tra Bảng 2.1 Thông tin nền đã điền Chính quy (59) và Khác (0)
+    bg_table = doc.tables[1]
+    # Row 1: Hình thức đào tạo | Chính quy | 59 | 100.00%
+    row_cq = [c.text.strip() for c in bg_table.rows[1].cells]
+    assert row_cq[1] == "Chính quy"
+    assert row_cq[2] == "59"
+    assert row_cq[3] == "100.00%"
+
+    # Row 2: | Khác | 0 | 0.00%
+    row_khac = [c.text.strip() for c in bg_table.rows[2].cells]
+    assert row_khac[1] == "Khác"
+    assert row_khac[2] == "0"
+    assert row_khac[3] == "0.00%"
+

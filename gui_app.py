@@ -620,6 +620,7 @@ class SettingsPage(ctk.CTkFrame):
         ("country_slogan", "Tiêu ngữ"),
         ("report_title", "Tiêu đề báo cáo (mỗi dòng một hàng; {ten_mon} = tên học phần)"),
         ("signer_title", "Chức danh ký tên cuối báo cáo"),
+        ("report_date", "Ngày lập báo cáo"),
         ("section_layouts", "Nhóm tiêu chí trong bảng kết quả"),
     ]
     NUMBER_FIELDS = [
@@ -708,6 +709,10 @@ class SettingsPage(ctk.CTkFrame):
         cell = self._field(form3, labels3["signer_title"])
         cell.grid(row=1, column=0, sticky="ew", pady=6)
         self._widgets["signer_title"] = self._entry(cell)
+        cell = self._field(form3, labels3["report_date"],
+                           "Để trống để tự động lấy ngày hiện tại (vd: TP. HCM, ngày 21 tháng 10 năm 2026)")
+        cell.grid(row=2, column=0, sticky="ew", pady=6)
+        self._widgets["report_date"] = self._entry(cell)
 
         # ── Bộ lọc feedback
         c2 = card(body)
@@ -782,6 +787,7 @@ class SettingsPage(ctk.CTkFrame):
         self._set("report_title", "\n".join(cfg["report_title_lines"]))
         self._set("table_header_bg", cfg["table_header_bg"])
         self._set("signer_title", cfg["signer_title"])
+        self._set("report_date", cfg.get("report_date", ""))
         self._set("section_layouts", cfg["section_layouts"])
         for key, _, _ in self.NUMBER_FIELDS:
             self._set(key, str(cfg[key]))
