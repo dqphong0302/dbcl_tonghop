@@ -10,6 +10,7 @@ Chạy:  pytest -v   (từ thư mục gốc dự án)
 """
 
 import os
+import re
 import sys
 import math
 import pytest
@@ -355,7 +356,7 @@ def test_report_current_date_and_chinh_quy_fill(tmp_path):
 
 
 def test_ai_summary_replaces_opinion_list(tmp_path, monkeypatch):
-    """Có mạng: Phần 3 là đoạn tóm tắt AI. Lỗi/không mạng: liệt kê ý kiến như cũ."""
+    """Có mạng: Phần 3 = đoạn tóm tắt AI + danh sách ý kiến. Lỗi/không mạng: chỉ liệt kê như cũ."""
     import ai_summary
     from docx import Document
     monkeypatch.setitem(e2w.CONFIG, "ai_enabled", True)
@@ -367,7 +368,8 @@ def test_ai_summary_replaces_opinion_list(tmp_path, monkeypatch):
     assert res.ok and res.summary_source == "ai"
     texts = _section3(res.output_path)
     assert texts[0] == "Sinh viên hài lòng với giảng viên, đề xuất thêm bài tập."
-    assert not any(t.startswith("- ") for t in texts)
+    assert texts[1] == "Ý kiến cụ thể của sinh viên:"
+    assert len([t for t in texts if t.startswith("- ")]) == res.n_responses   # vẫn liệt kê đủ ý kiến
 
     def _offline(*a, **k):
         raise OSError("no network")
@@ -443,3 +445,47 @@ def test_ai_skips_after_network_failure(monkeypatch):
     assert a.summarize_feedbacks(["Ý kiến A"]) is None
     assert a.summarize_feedbacks(["Ý kiến B"]) is None
     assert len(calls) == 1          # lần 2 bỏ qua ngay, không chờ mạng
+
+
+def test_invalid_saved_setting_keeps_others(tmp_path, monkeypatch):
+    import json
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({"word_format": {"font_size": "abc", "faculty_name": "KHOA X"},
+                             "ai_config": {"enabled": "false"}}), encoding="utf-8")
+    monkeypatch.setattr(e2w, "SETTINGS_FILE", f)
+    saved = dict(e2w.CONFIG)
+    try:
+        e2w.load_settings_into_config()
+        assert e2w.CONFIG["faculty_name"] == "KHOA X"            # giá trị hợp lệ vẫn áp dụng
+        assert e2w.CONFIG["font_size"] == e2w.DEFAULT_CONFIG["font_size"]
+        assert e2w.CONFIG["ai_enabled"] is False
+    finally:
+        e2w.CONFIG.update(saved)
+
+
+def test_corrupt_excel_reports_friendly_error(tmp_path):
+    f = tmp_path / "hong 3.xls"
+    f.write_bytes(b"not an excel file")
+    res = e2w.generate_report(str(f), str(tmp_path))
+    assert not res.ok and "Không phải file Excel" in res.error
+
+
+def test_feedbacks_report_per_file_errors(tmp_path):
+    bad = tmp_path / "bad.xls"
+    bad.write_bytes(b"")
+    msgs = []
+    out = mf.merge_feedbacks([str(bad), FEEDBACK_FILE], str(tmp_path),
+                             on_progress=lambda m, lv: msgs.append((lv, m)))
+    assert out and os.path.exists(out)
+    assert any(lv == "error" and "bad.xls" in m for lv, m in msgs)
+
+
+def test_feedbacks_from_survey_summary_file_are_real_opinions():
+    fb = mf.extract_feedbacks(SURVEY_FILE_2)
+    assert fb, "phải lấy được ý kiến mở từ file thống kê"
+    assert not any(re.fullmatch(r"[\d\s.,%]+", f.rstrip(".")) for f in fb)
+    assert "Tổng cộng." not in fb
+
+
+def test_numbers_are_not_opinions():
+    assert e2w.parse_open_responses("133.0\n0,95\n45%\nCần thêm bài tập") == ["Cần thêm bài tập."]

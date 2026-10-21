@@ -68,19 +68,35 @@ SETTINGS_FILE = e2w.SETTINGS_FILE
 
 
 def load_settings():
+    """Đọc file cấu hình; file hỏng được đổi tên thành .bak (không ghi đè mất) rồi dùng mặc định."""
     try:
         if SETTINGS_FILE.exists():
-            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+            raise ValueError("nội dung không phải đối tượng JSON")
+    except Exception as e:
+        backup = SETTINGS_FILE.with_suffix(".json.bak")
+        try:
+            SETTINGS_FILE.replace(backup)
+        except OSError:
+            pass
+        if _LOG:
+            _LOG.warning("File cấu hình hỏng (%s) — đã lưu bản cũ ở %s, dùng mặc định", e, backup)
     return {}
 
 
-def save_settings(data: dict):
+def save_settings(data: dict) -> bool:
+    """Ghi cấu hình (ghi file tạm rồi đổi tên để không bao giờ để lại file dở dang)."""
     try:
-        SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+        tmp = SETTINGS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(SETTINGS_FILE)
+        return True
+    except Exception as e:
+        if _LOG:
+            _LOG.error("Không lưu được cấu hình vào %s: %s", SETTINGS_FILE, e)
+        return False
 
 
 def resource_path(rel):
@@ -465,7 +481,10 @@ class ToolPage(ctk.CTkFrame):
     def _open_outdir(self):
         path = self.outdir.get().strip()
         if path and os.path.isdir(path):
-            open_path(path)
+            try:
+                open_path(path)
+            except Exception as e:
+                messagebox.showerror("Không mở được thư mục", f"{path}\n\n{e}")
         else:
             messagebox.showinfo("Thông báo", "Thư mục kết quả chưa tồn tại — hãy chạy xử lý trước.")
 
@@ -597,12 +616,18 @@ class FeedbackPage(ToolPage):
 
     def run(self, files, out_dir):
         self.post_log(f"Bắt đầu gộp feedbacks từ {len(files)} file", "info")
-        for f in files:
-            self.post_log(f"📄 {os.path.basename(f)}", "dim")
         self.post_progress(0.3, "Đang đọc dữ liệu…")
         self.app.post_status("Đang tổng hợp feedbacks…")
-
-        output_path = merge_feedbacks(files, out_dir)
+        levels = {"info": "dim", "warning": "warning", "error": "error"}
+        try:
+            output_path = merge_feedbacks(
+                files, out_dir, on_progress=lambda m, lv: self.post_log(m, levels.get(lv, "dim")))
+        except PermissionError as e:
+            self.post_stat(2, len(files))
+            self.post_progress(0, "Lỗi ghi file")
+            self.post_log(f"❌ {e}", "error")
+            self.app.post_status("Không ghi được Feedbacks.docx")
+            return
         if output_path:
             self.post_stat(1, len(files))
             self.post_progress(1, "Hoàn tất")
@@ -872,7 +897,11 @@ class SettingsPage(ctk.CTkFrame):
             "skip_patterns": self._get("skip_patterns"),
         }
         self.app.settings["ai_config"] = self._ai_values()
-        save_settings(self.app.settings)
+        if not save_settings(self.app.settings):
+            messagebox.showerror("Không lưu được cấu hình",
+                                 f"Không ghi được file cấu hình:\n{SETTINGS_FILE}\n\n"
+                                 "Kiểm tra quyền ghi vào thư mục người dùng rồi thử lại.")
+            return
         e2w.load_settings_into_config()
         self.load()
         self.app.set_status("Đã lưu cấu hình")
@@ -1049,6 +1078,7 @@ class App(ctk.CTk):
 
         self._show(self._initial_page())
         self._center()
+        threading.excepthook = self._thread_exception
         self.after(50, self._drain_queue)
 
     # ── Layout ──────────────────────────────────────────────────
@@ -1145,6 +1175,22 @@ class App(ctk.CTk):
             open_path(get_log_dir())
         except Exception as e:
             messagebox.showinfo("Nhật ký", f"Không mở được thư mục nhật ký:\n{e}")
+
+    # ── Lưới an toàn: lỗi chưa bắt trong giao diện / luồng nền ───
+    # Bản .exe không có cửa sổ console nên lỗi phải được ghi nhật ký và hiện cho người dùng.
+
+    def report_callback_exception(self, exc, val, tb):
+        detail = "".join(traceback.format_exception(exc, val, tb))
+        if _LOG:
+            _LOG.error("Lỗi giao diện chưa xử lý:\n%s", detail)
+        messagebox.showerror("Đã xảy ra lỗi",
+                             f"{val}\n\nChi tiết đã được ghi vào nhật ký (nút “Mở nhật ký”).")
+
+    def _thread_exception(self, args):
+        detail = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+        if _LOG:
+            _LOG.error("Lỗi luồng nền chưa xử lý:\n%s", detail)
+        self.post(lambda: messagebox.showerror("Đã xảy ra lỗi", str(args.exc_value)))
 
     # ── Trạng thái & cài đặt ────────────────────────────────────
 

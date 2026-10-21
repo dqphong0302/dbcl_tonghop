@@ -31,7 +31,7 @@ import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 from pathlib import Path
-from data_utils import open_workbook as _open_workbook
+from data_utils import ExcelReadError, open_workbook as _open_workbook
 try:
     from app_logging import get_logger
     log = get_logger()
@@ -266,7 +266,8 @@ _WORD_FORMAT_KEYS = {
 
 # Mục "ai_config": khóa trong file settings → (khóa CONFIG, hàm chuyển kiểu)
 _AI_KEYS = {
-    "enabled": ("ai_enabled", bool),
+    "enabled": ("ai_enabled", lambda v: v if isinstance(v, bool)
+                else str(v).strip().lower() in ("1", "true", "yes", "on")),
     "base_url": ("ai_base_url", str),
     "api_key": ("ai_api_key", str),
     "model": ("ai_model", str),
@@ -303,16 +304,25 @@ def load_settings_into_config():
 
 
 def _apply_settings(cfg, data):
-    """Ghi đè cfg bằng các giá trị người dùng đã lưu (dict đọc từ SETTINGS_FILE)."""
-    for key, (cfg_key, cast) in _WORD_FORMAT_KEYS.items():
-        if key in data.get("word_format", {}):
-            cfg[cfg_key] = cast(data["word_format"][key])
-    for key, (cfg_key, sep) in _FEEDBACK_KEYS.items():
-        if key in data.get("feedback_config", {}):
-            cfg[cfg_key] = _as_list(data["feedback_config"][key], sep)
-    for key, (cfg_key, cast) in _AI_KEYS.items():
-        if key in data.get("ai_config", {}):
-            cfg[cfg_key] = cast(data["ai_config"][key])
+    """Ghi đè cfg bằng các giá trị người dùng đã lưu (dict đọc từ SETTINGS_FILE).
+    Giá trị nào sai kiểu thì bỏ qua riêng giá trị đó, giữ mặc định — không làm mất cả cấu hình."""
+    groups = [
+        ("word_format", {k: (ck, cast) for k, (ck, cast) in _WORD_FORMAT_KEYS.items()}),
+        ("feedback_config", {k: (ck, lambda v, sep=sep: _as_list(v, sep))
+                             for k, (ck, sep) in _FEEDBACK_KEYS.items()}),
+        ("ai_config", {k: (ck, cast) for k, (ck, cast) in _AI_KEYS.items()}),
+    ]
+    for section, keys in groups:
+        saved = data.get(section) or {}
+        if not isinstance(saved, dict):
+            continue
+        for key, (cfg_key, cast) in keys.items():
+            if key not in saved:
+                continue
+            try:
+                cfg[cfg_key] = cast(saved[key])
+            except (TypeError, ValueError) as e:
+                log.warning("Bỏ qua cấu hình %s.%s không hợp lệ (%r): %s", section, key, saved[key], e)
 
 
 # Tải cấu hình tự động khi import
@@ -657,6 +667,9 @@ def parse_open_responses(raw_text):
         for sp in _rejoin_names(_split_glued_refusals(sub_parts)):
             sp = sp.strip().rstrip(".")
             if not sp or len(sp) < 3:
+                continue
+            # Chỉ là số / tỷ lệ (vd "133.0", "0,95", "45%") → không phải ý kiến
+            if re.fullmatch(r"[\d\s.,%/+-]+", sp):
                 continue
             
             # Kiểm tra có phải câu trả lời rỗng/vô nghĩa không
@@ -1190,7 +1203,8 @@ def create_word_report(data, output_path):
     add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
                             bold=True, font_size=12, space_after=6)
     
-    # Có đoạn tóm tắt AI → in đoạn văn; không có (offline/lỗi) → liệt kê ý kiến như cũ;
+    # Có đoạn tóm tắt AI → in đoạn văn rồi liệt kê từng ý kiến bên dưới;
+    # không có (offline/lỗi) → chỉ liệt kê ý kiến như cũ;
     # không có ý kiến nào → "*Không có ý kiến." theo mẫu mới (Hình 3)
     responses = parse_open_responses(data.get("open_responses", ""))
     summary = data.get("opinion_summary") if responses else None
@@ -1198,8 +1212,9 @@ def create_word_report(data, output_path):
         p_sum = add_formatted_paragraph(doc, summary, space_after=0, space_before=0)
         p_sum.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         p_sum.paragraph_format.first_line_indent = Cm(1.0)
-        responses = [summary]
-    for text in ([] if summary else responses or ["*Không có ý kiến."]):
+        add_formatted_paragraph(doc, "Ý kiến cụ thể của sinh viên:", italic=True,
+                                space_after=0, space_before=6)
+    for text in responses or ["*Không có ý kiến."]:
         p_op = add_formatted_paragraph(doc, f"- {text}" if responses else text,
                                        space_after=0, space_before=0)
         if responses:
@@ -1544,9 +1559,12 @@ def generate_report(input_path, output_dir=None, on_progress=None, taken=None):
         result.n_questions = len(data["survey_questions"])
         result.n_responses = len(parse_open_responses(data.get("open_responses", "")))
         log.info("Đã tạo %s từ %s", os.path.basename(output_path), os.path.basename(input_path))
+    except ExcelReadError as e:
+        log.error("Không đọc được %s: %s", os.path.basename(input_path), e)
+        result.error = str(e)
     except Exception as e:
         log.exception("Lỗi khi xử lý file %s", input_path)
-        result.error = str(e)
+        result.error = f"Lỗi không mong muốn: {e}"
     return result
 
 
@@ -1568,7 +1586,17 @@ def process_file(input_path, output_dir=None, taken=None):
     return [result.output_path]
 
 
+def _safe_console():
+    """Console Windows (cp1252…) không in được emoji/tiếng Việt → thay ký tự lỗi thay vì dừng chương trình."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
 def main():
+    _safe_console()
     parser = argparse.ArgumentParser(
         description="Tổng hợp kết quả khảo sát từ Excel (.xls) sang Word (.docx)",
         formatter_class=argparse.RawDescriptionHelpFormatter,

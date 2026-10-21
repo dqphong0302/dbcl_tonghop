@@ -14,6 +14,7 @@ Hỗ trợ cả .xls (xlrd) và .xlsx (openpyxl) qua một lớp đọc thống 
 
 import os
 import re
+from html.parser import HTMLParser
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -63,34 +64,127 @@ class SheetReader:
         return [""] * self.ncols
 
 
+class ExcelReadError(Exception):
+    """Lỗi đọc file Excel, thông điệp tiếng Việt dễ hiểu cho người dùng."""
+
+
+def _detect_format(filepath: str) -> str:
+    """Nhận dạng định dạng theo NỘI DUNG file (không tin phần mở rộng):
+    "xls" (OLE2), "xlsx" (ZIP), "html" (trang web đổi đuôi .xls)."""
+    with open(filepath, "rb") as f:
+        head = f.read(512)
+    if not head:
+        raise ExcelReadError("File rỗng (0 byte)")
+    if head.startswith(b"\xd0\xcf\x11\xe0"):
+        return "xls"
+    if head.startswith(b"PK"):
+        return "xlsx"
+    text = head.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if text.startswith((b"<html", b"<!doctype", b"<table", b"<meta", b"<?xml")) or b"<table" in head.lower():
+        return "html"
+    raise ExcelReadError("Không phải file Excel hợp lệ (có thể là file văn bản hoặc đã bị đổi đuôi)")
+
+
+def _html_number(text):
+    """Số trong bảng HTML: "12", "3.5" và dấu phẩy thập phân kiểu Việt "1,5" → float; còn lại giữ chuỗi."""
+    if re.fullmatch(r"-?\d+(\.\d+)?", text):
+        return float(text)
+    if re.fullmatch(r"-?\d+,\d+", text):
+        return float(text.replace(",", "."))
+    return text
+
+
+class _HTMLTables(HTMLParser):
+    """Đọc các bảng <table> trong file HTML (nhiều hệ thống xuất "Excel" dưới dạng HTML)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tables, self._row, self._cell = [], None, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self.tables.append([])
+        elif tag == "tr" and self.tables:
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = []
+            span = str(dict(attrs).get("colspan") or "1")
+            self._span = int(span) if span.isdigit() else 1
+        elif tag == "br" and self._cell is not None:
+            self._cell.append("\n")
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self._cell is not None:
+            text = re.sub(r"[ \t\r\xa0]+", " ", "".join(self._cell)).strip()
+            value = _html_number(text)
+            self._row.append(value)
+            self._row.extend([""] * (self._span - 1))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            self.tables[-1].append(self._row)
+            self._row = None
+
+
 class WorkbookReader:
-    """Đọc workbook .xls/.xlsx thành danh sách SheetReader."""
+    """Đọc workbook .xls/.xlsx (hoặc HTML đổi đuôi .xls) thành danh sách SheetReader."""
 
     def __init__(self, filepath: str):
         self.filepath = filepath
         self.sheets: List[SheetReader] = []
-        ext = os.path.splitext(filepath)[1].lower()
-        if ext == ".xlsx":
-            self._load_xlsx(filepath)
-        else:
-            self._load_xls(filepath)
+        if not os.path.exists(filepath):
+            raise ExcelReadError("File không tồn tại")
+        try:
+            fmt = _detect_format(filepath)
+            {"xls": self._load_xls, "xlsx": self._load_xlsx, "html": self._load_html}[fmt](filepath)
+        except ExcelReadError:
+            raise
+        except PermissionError:
+            raise ExcelReadError("Không có quyền đọc file (file đang bị khóa hoặc mở bởi chương trình khác)")
+        except Exception as e:
+            raise ExcelReadError(f"File Excel bị hỏng hoặc không đọc được ({e})") from e
 
     def _load_xls(self, filepath):
         import xlrd
-        wb = xlrd.open_workbook(filepath)
-        for sh in wb.sheets():
-            rows = [sh.row_values(r) for r in range(sh.nrows)]
-            self.sheets.append(SheetReader(sh.name, rows))
+        # logfile=devnull: bản .exe không có console, xlrd ghi cảnh báo ra stdout (None) sẽ lỗi
+        with open(os.devnull, "w") as devnull:
+            wb = xlrd.open_workbook(filepath, logfile=devnull)
+            for sh in wb.sheets():
+                rows = [sh.row_values(r) for r in range(sh.nrows)]
+                self.sheets.append(SheetReader(sh.name, rows))
 
     def _load_xlsx(self, filepath):
         import openpyxl
         wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
-        for ws in wb.worksheets:
-            rows = []
-            for row in ws.iter_rows(values_only=True):
-                rows.append(["" if v is None else v for v in row])
-            self.sheets.append(SheetReader(ws.title, rows))
-        wb.close()
+        try:
+            for ws in wb.worksheets:
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append(["" if v is None else v for v in row])
+                self.sheets.append(SheetReader(ws.title, rows))
+        finally:
+            wb.close()
+
+    def _load_html(self, filepath):
+        raw = open(filepath, "rb").read()
+        m = re.search(rb'charset=["\']?([\w-]+)', raw[:2048], re.I)
+        text = None
+        for enc in ([m.group(1).decode()] if m else []) + ["utf-8", "cp1258", "latin-1"]:
+            try:
+                text = raw.decode(enc)
+                break
+            except (LookupError, UnicodeDecodeError):
+                continue
+        parser = _HTMLTables()
+        parser.feed(text)
+        tables = [t for t in parser.tables if t]
+        if not tables:
+            raise ExcelReadError("File HTML không chứa bảng dữ liệu nào")
+        for i, rows in enumerate(tables, 1):
+            self.sheets.append(SheetReader(f"Sheet{i}", rows))
 
     @property
     def nsheets(self) -> int:
@@ -104,7 +198,8 @@ class WorkbookReader:
 
 
 def open_workbook(filepath: str) -> WorkbookReader:
-    """Mở file Excel (.xls hoặc .xlsx) trả về WorkbookReader thống nhất."""
+    """Mở file Excel (.xls/.xlsx/HTML đổi đuôi) trả về WorkbookReader thống nhất.
+    Lỗi đọc file → ExcelReadError với thông điệp tiếng Việt."""
     return WorkbookReader(filepath)
 
 

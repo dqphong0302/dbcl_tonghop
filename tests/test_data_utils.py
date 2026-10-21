@@ -62,3 +62,44 @@ def test_validation_report():
     assert len(report.errors) == 1
     summary = report.summary()
     assert "1 lỗi" in summary
+
+
+# ── Đọc file lỗi / sai định dạng ─────────────────────────────────
+import shutil
+from data_utils import ExcelReadError, open_workbook
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REAL_XLS = os.path.join(ROOT_DIR, "dulieu", "D25 Giáo dục thể chất 2 25-26 HKI 2.xls")
+
+
+@pytest.mark.parametrize("content, message", [
+    (b"", "rỗng"),
+    (b"hello world", "Không phải file Excel"),
+])
+def test_bad_files_give_vietnamese_error(tmp_path, content, message):
+    f = tmp_path / "x.xls"
+    f.write_bytes(content)
+    with pytest.raises(ExcelReadError, match=message):
+        open_workbook(str(f))
+
+
+def test_truncated_xls_is_reported_as_corrupt(tmp_path):
+    f = tmp_path / "cut.xls"
+    f.write_bytes(open(REAL_XLS, "rb").read()[:3000])
+    with pytest.raises(ExcelReadError, match="hỏng"):
+        open_workbook(str(f))
+
+
+def test_format_detected_by_content_not_extension(tmp_path):
+    f = tmp_path / "doi_duoi.xlsx"            # thực chất là .xls
+    shutil.copy(REAL_XLS, f)
+    assert open_workbook(str(f)).nsheets == open_workbook(REAL_XLS).nsheets
+
+
+def test_html_disguised_as_xls(tmp_path):
+    f = tmp_path / "web.xls"
+    f.write_text('<html><meta charset="utf-8"><table><tr><td colspan="2">Lớp</td><td>3</td></tr>'
+                 '<tr><td>A</td><td>B</td><td>1,5</td></tr></table></html>', encoding="utf-8")
+    sh = open_workbook(str(f)).sheet_by_index(0)
+    assert sh.cell_value(0, 0) == "Lớp" and sh.cell_value(0, 2) == 3.0
+    assert sh.cell_value(1, 2) == 1.5                      # dấu phẩy thập phân kiểu Việt
