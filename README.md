@@ -40,8 +40,8 @@ Không cần cài Python — tải đúng file cho máy của bạn tại trang 
 3. Bấm **▶ Tạo báo cáo** → bấm **Mở thư mục kết quả** để xem file Word.
 
 **Tùy chọn — AI tóm tắt ý kiến sinh viên:** vào **Cấu hình → AI tóm tắt ý kiến sinh viên**, nhập API key và model,
-bấm **Kiểm tra kết nối** rồi **Lưu cấu hình**. Khi có mạng, Phần 3 báo cáo và `Feedbacks.docx` có đoạn văn tóm tắt;
-không có mạng hoặc AI lỗi, phần mềm tự xử lý offline như bình thường. Bản tải về **không kèm API key**.
+bấm **Kiểm tra kết nối** rồi **Lưu cấu hình**. Khi có mạng, Phần 3 báo cáo có đoạn văn tóm tắt (kèm danh sách ý kiến bên dưới) và `Feedbacks.docx`
+có mục tóm tắt; không có mạng hoặc AI lỗi, phần mềm tự xử lý offline như bình thường. Bản tải về **không kèm API key**.
 
 ---
 

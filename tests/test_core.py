@@ -356,7 +356,7 @@ def test_report_current_date_and_chinh_quy_fill(tmp_path):
 
 
 def test_ai_summary_replaces_opinion_list(tmp_path, monkeypatch):
-    """Có mạng: Phần 3 là đoạn tóm tắt AI. Lỗi/không mạng: liệt kê ý kiến như cũ."""
+    """Có mạng: Phần 3 = đoạn tóm tắt AI + danh sách ý kiến. Lỗi/không mạng: chỉ liệt kê như cũ."""
     import ai_summary
     from docx import Document
     monkeypatch.setitem(e2w.CONFIG, "ai_enabled", True)
@@ -368,7 +368,8 @@ def test_ai_summary_replaces_opinion_list(tmp_path, monkeypatch):
     assert res.ok and res.summary_source == "ai"
     texts = _section3(res.output_path)
     assert texts[0] == "Sinh viên hài lòng với giảng viên, đề xuất thêm bài tập."
-    assert not any(t.startswith("- ") for t in texts)
+    assert texts[1] == "Ý kiến cụ thể của sinh viên:"
+    assert len([t for t in texts if t.startswith("- ")]) == res.n_responses   # vẫn liệt kê đủ ý kiến
 
     def _offline(*a, **k):
         raise OSError("no network")

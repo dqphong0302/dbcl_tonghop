@@ -1203,7 +1203,8 @@ def create_word_report(data, output_path):
     add_formatted_paragraph(doc, "Phần 3. Các ý kiến đóng góp từ câu hỏi mở:", 
                             bold=True, font_size=12, space_after=6)
     
-    # Có đoạn tóm tắt AI → in đoạn văn; không có (offline/lỗi) → liệt kê ý kiến như cũ;
+    # Có đoạn tóm tắt AI → in đoạn văn rồi liệt kê từng ý kiến bên dưới;
+    # không có (offline/lỗi) → chỉ liệt kê ý kiến như cũ;
     # không có ý kiến nào → "*Không có ý kiến." theo mẫu mới (Hình 3)
     responses = parse_open_responses(data.get("open_responses", ""))
     summary = data.get("opinion_summary") if responses else None
@@ -1211,8 +1212,9 @@ def create_word_report(data, output_path):
         p_sum = add_formatted_paragraph(doc, summary, space_after=0, space_before=0)
         p_sum.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         p_sum.paragraph_format.first_line_indent = Cm(1.0)
-        responses = [summary]
-    for text in ([] if summary else responses or ["*Không có ý kiến."]):
+        add_formatted_paragraph(doc, "Ý kiến cụ thể của sinh viên:", italic=True,
+                                space_after=0, space_before=6)
+    for text in responses or ["*Không có ý kiến."]:
         p_op = add_formatted_paragraph(doc, f"- {text}" if responses else text,
                                        space_after=0, space_before=0)
         if responses:
