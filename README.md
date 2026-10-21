@@ -17,15 +17,15 @@
 
 ---
 
-## ⬇️ Tải về & sử dụng ngay (phiên bản 3.0.0)
+## ⬇️ Tải về & sử dụng ngay
 
-Không cần cài Python — tải đúng file cho máy của bạn tại trang **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)**:
+Không cần cài Python — các link dưới đây luôn tải **bản mới nhất**. Xem ghi chú từng phiên bản tại trang **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)**:
 
 | Máy tính | File tải về | Cách mở |
 |---|---|---|
-| **Windows 10/11** | [TongHopKhaoSat-Windows.exe](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-Windows.exe) | Bấm đúp vào file `.exe` |
-| **Mac chip Apple** (M1/M2/M3/M4) | [TongHopKhaoSat-macOS-AppleSilicon.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-macOS-AppleSilicon.zip) | Giải nén → mở `TongHopKhaoSat.app` |
-| **Mac chip Intel** | [TongHopKhaoSat-macOS-Intel.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/download/v3.0.0/TongHopKhaoSat-macOS-Intel.zip) | Giải nén → mở `TongHopKhaoSat.app` |
+| **Windows 10/11** | [TongHopKhaoSat-Windows.exe](https://github.com/dqphong0302/dbcl_tonghop/releases/latest/download/TongHopKhaoSat-Windows.exe) | Bấm đúp vào file `.exe` |
+| **Mac chip Apple** (M1/M2/M3/M4) | [TongHopKhaoSat-macOS-AppleSilicon.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/latest/download/TongHopKhaoSat-macOS-AppleSilicon.zip) | Giải nén → mở `TongHopKhaoSat.app` |
+| **Mac chip Intel** | [TongHopKhaoSat-macOS-Intel.zip](https://github.com/dqphong0302/dbcl_tonghop/releases/latest/download/TongHopKhaoSat-macOS-Intel.zip) | Giải nén → mở `TongHopKhaoSat.app` |
 
 > Không biết Mac của mình dùng chip gì? Vào ** → Giới thiệu về máy Mac này**: dòng *Chip: Apple M…* → bản Apple; dòng *Bộ xử lý: Intel…* → bản Intel.
 
@@ -287,7 +287,7 @@ Mỗi lần push lên `main` hoặc mở Pull Request, GitHub Actions ([`build.y
 | `TongHopKhaoSat-macOS-AppleSilicon.zip` | Mac chip M1/M2/M3/M4 |
 | `TongHopKhaoSat-macOS-Intel.zip` | Mac chip Intel |
 
-Bản phát hành chính thức: **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)** (xem mục [Tải về](#️-tải-về--sử-dụng-ngay-phiên-bản-300) ở đầu trang). Bản build thử của từng commit/PR: tab **Actions → lần chạy → Artifacts**.
+Bản phát hành chính thức: **[Releases](https://github.com/dqphong0302/dbcl_tonghop/releases/latest)** (xem mục [Tải về](#️-tải-về--sử-dụng-ngay) ở đầu trang). Bản build thử của từng commit/PR: tab **Actions → lần chạy → Artifacts**.
 
 Phát hành phiên bản mới: gắn tag rồi đẩy lên, workflow tự build và tạo Release đính kèm cả 3 file:
 ```bash
