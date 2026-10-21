@@ -291,23 +291,29 @@ def _as_list(value, sep):
 
 def load_settings_into_config():
     """Nạp lại CONFIG = mặc định + các giá trị người dùng đã lưu trong SETTINGS_FILE."""
-    CONFIG.clear()
-    CONFIG.update(copy.deepcopy(DEFAULT_CONFIG))
+    # Dựng cấu hình mới rồi cập nhật một lần (không clear) để luồng xử lý đang chạy
+    # không bao giờ thấy CONFIG rỗng.
+    new = copy.deepcopy(DEFAULT_CONFIG)
     try:
-        if not SETTINGS_FILE.exists():
-            return
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        for key, (cfg_key, cast) in _WORD_FORMAT_KEYS.items():
-            if key in data.get("word_format", {}):
-                CONFIG[cfg_key] = cast(data["word_format"][key])
-        for key, (cfg_key, sep) in _FEEDBACK_KEYS.items():
-            if key in data.get("feedback_config", {}):
-                CONFIG[cfg_key] = _as_list(data["feedback_config"][key], sep)
-        for key, (cfg_key, cast) in _AI_KEYS.items():
-            if key in data.get("ai_config", {}):
-                CONFIG[cfg_key] = cast(data["ai_config"][key])
+        if SETTINGS_FILE.exists():
+            _apply_settings(new, json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
     except Exception as e:
         log.warning("Không đọc được cấu hình người dùng: %s", e)
+    CONFIG.update(new)
+
+
+def _apply_settings(cfg, data):
+    """Ghi đè cfg bằng các giá trị người dùng đã lưu (dict đọc từ SETTINGS_FILE)."""
+    for key, (cfg_key, cast) in _WORD_FORMAT_KEYS.items():
+        if key in data.get("word_format", {}):
+            cfg[cfg_key] = cast(data["word_format"][key])
+    for key, (cfg_key, sep) in _FEEDBACK_KEYS.items():
+        if key in data.get("feedback_config", {}):
+            cfg[cfg_key] = _as_list(data["feedback_config"][key], sep)
+    for key, (cfg_key, cast) in _AI_KEYS.items():
+        if key in data.get("ai_config", {}):
+            cfg[cfg_key] = cast(data["ai_config"][key])
+
 
 # Tải cấu hình tự động khi import
 load_settings_into_config()
@@ -1450,7 +1456,7 @@ def _resolve_total_students(data, all_data, absent):
     return sum(f5_values) if f5_values else None
 
 
-def generate_report(input_path, output_dir=None, on_progress=None):
+def generate_report(input_path, output_dir=None, on_progress=None, taken=None):
     """Đọc 1 file Excel (gộp tất cả sheet có dữ liệu) và xuất báo cáo Word.
 
     on_progress(msg): callback tùy chọn nhận thông báo từng sheet bị bỏ qua.
@@ -1518,6 +1524,13 @@ def generate_report(input_path, output_dir=None, on_progress=None):
 
         os.makedirs(out_dir, exist_ok=True)
         output_path = os.path.join(out_dir, f"{out_name}.docx")
+        if taken is not None:
+            # Hai file Excel cùng tên gốc (vd "X 3.xls", "X 5.xls") → không ghi đè lẫn nhau
+            n = 2
+            while os.path.normcase(output_path) in taken:
+                output_path = os.path.join(out_dir, f"{out_name} ({n}).docx")
+                n += 1
+            taken.add(os.path.normcase(output_path))
         try:
             create_word_report(data, output_path)
         except PermissionError:
@@ -1537,11 +1550,11 @@ def generate_report(input_path, output_dir=None, on_progress=None):
     return result
 
 
-def process_file(input_path, output_dir=None):
+def process_file(input_path, output_dir=None, taken=None):
     """CLI: xử lý 1 file Excel → Word, in tiến trình ra console.
     Trả về danh sách file Word đã tạo, hoặc None nếu thất bại."""
     print(f"  📄 Đang xử lý: {os.path.basename(input_path)}")
-    result = generate_report(input_path, output_dir,
+    result = generate_report(input_path, output_dir, taken=taken,
                              on_progress=lambda msg: print(f"     ├─ ⏭ {msg}"))
     if not result.ok:
         print(f"     └─ ❌ {result.error}")
@@ -1604,10 +1617,11 @@ Ví dụ sử dụng:
     
     success = 0
     failed = 0
-    
+    taken = set()
+
     for filepath in files_to_process:
         print()
-        result = process_file(filepath, args.output_dir)
+        result = process_file(filepath, args.output_dir, taken=taken)
         if result:
             success += 1
         else:

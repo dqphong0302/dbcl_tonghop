@@ -413,3 +413,33 @@ def test_prompt_placeholders_and_per_target_prompts(monkeypatch):
                         or "x" * 30)
     a.summarize_feedbacks(["Ý kiến A", "Ý kiến B"], kind="feedback")
     assert seen["sys"] == "Prompt riêng cho feedback"
+
+
+def test_same_base_name_does_not_overwrite(tmp_path):
+    import shutil
+    a = os.path.join(str(tmp_path), "Lop B 3.xls")
+    b = os.path.join(str(tmp_path), "Lop B 5.xls")
+    shutil.copy(SURVEY_FILE, a)
+    shutil.copy(SURVEY_FILE, b)
+    taken = set()
+    r1 = e2w.generate_report(a, str(tmp_path / "out"), taken=taken)
+    r2 = e2w.generate_report(b, str(tmp_path / "out"), taken=taken)
+    assert os.path.basename(r1.output_path) == "Lop B.docx"
+    assert os.path.basename(r2.output_path) == "Lop B (2).docx"
+
+
+def test_ai_skips_after_network_failure(monkeypatch):
+    import urllib.error
+    import ai_summary as a
+    monkeypatch.setitem(e2w.CONFIG, "ai_enabled", True)
+    monkeypatch.setitem(e2w.CONFIG, "ai_api_key", "k")
+    monkeypatch.setattr(a, "_offline_until", 0.0)
+    calls = []
+
+    def down(*args, **kw):
+        calls.append(1)
+        raise urllib.error.URLError("no network")
+    monkeypatch.setattr(a, "_chat", down)
+    assert a.summarize_feedbacks(["Ý kiến A"]) is None
+    assert a.summarize_feedbacks(["Ý kiến B"]) is None
+    assert len(calls) == 1          # lần 2 bỏ qua ngay, không chờ mạng

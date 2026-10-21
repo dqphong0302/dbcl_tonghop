@@ -10,6 +10,8 @@ quay về cách xử lý offline như cũ — không bao giờ làm hỏng việ
 
 import json
 import re
+import ssl
+import time
 import urllib.error
 import urllib.request
 from typing import Dict, List, Optional, Tuple
@@ -94,6 +96,22 @@ def is_configured(cfg=None) -> bool:
                 and cfg.get("ai_model"))
 
 
+# Sau lỗi mạng (không kết nối/quá thời gian), tạm bỏ qua AI một lúc để các file sau
+# không phải chờ timeout lần lượt.
+_OFFLINE_BACKOFF = 300
+_offline_until = 0.0
+
+
+def _ssl_context():
+    """Dùng bộ chứng chỉ certifi nếu có — bản đóng gói (PyInstaller, nhất là macOS)
+    thường không tìm thấy chứng chỉ hệ thống."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _chat(cfg, messages, timeout) -> str:
     url = cfg["ai_base_url"].rstrip("/") + "/chat/completions"
     body = json.dumps({"model": cfg["ai_model"], "messages": messages,
@@ -102,7 +120,7 @@ def _chat(cfg, messages, timeout) -> str:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {cfg['ai_api_key']}",
     })
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         return _parse_reply(resp.read().decode("utf-8"))
 
 
@@ -144,11 +162,15 @@ def summarize_feedbacks(opinions: List[str], kind: str = "report",
     prompt: truyền vào để thử prompt chưa lưu (nút "Thử prompt" trong Cấu hình).
     """
     cfg = _config()
-    if not opinions or not is_configured(cfg):
+    global _offline_until
+    if not opinions or not is_configured(cfg) or time.time() < _offline_until:
         return None
     try:
         return run_summary(cfg, opinions, prompt or get_prompt(kind, cfg), variables)
     except Exception as e:
+        if isinstance(e, (urllib.error.URLError, TimeoutError, OSError)) and \
+                not isinstance(e, urllib.error.HTTPError):
+            _offline_until = time.time() + _OFFLINE_BACKOFF
         log.warning("Không dùng được AI (%s) — chuyển sang xử lý offline: %s",
                     cfg.get("ai_model"), _describe_error(e))
         return None

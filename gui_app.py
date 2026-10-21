@@ -536,6 +536,7 @@ class ReportPage(ToolPage):
         total, ok, failed = len(files), 0, 0
         missing_total = []
         started = time.perf_counter()
+        taken = set()
         self.post_log(f"Bắt đầu xử lý {total} file → {out_dir}", "info")
 
         for i, path in enumerate(files):
@@ -545,7 +546,7 @@ class ReportPage(ToolPage):
             self.post_log("")
             self.post_log(f"📄 {name}", "info")
 
-            result = e2w.generate_report(path, out_dir,
+            result = e2w.generate_report(path, out_dir, taken=taken,
                                          on_progress=lambda m: self.post_log(f"   • {m}", "dim"))
             if result.ok:
                 ok += 1
